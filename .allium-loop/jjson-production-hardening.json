@@ -1,0 +1,104 @@
+{
+  "goal": "Harden jjson for production on Jolt 0.8.23",
+  "mode": "spec-first",
+  "tick": 2,
+  "active_inner_loop": "witness",
+  "completed_sub_goals": [
+    "Upgrade the persistent Jolt installation to 0.8.23",
+    "Propagate public API, native ABI, concurrency, and packaging tests",
+    "Replace the decode tape and managed token interpreter with direct Chez object materialization in one native call",
+    "Implement strict options, key transformation, UTF-8 validation, and exact numeric handling",
+    "Prove static packaged execution without a native sidecar",
+    "Rerun the strictly serial Boost.JSON comparison after the decoder cutover"
+  ],
+  "open_questions": [],
+  "generated_test_hashes": {
+    "test/smoke.clj": "sha256:c144a55a9a69e35bb3f7d63f4afb117f38773c3439851b2890b4511c568189ad",
+    "test/stress.clj": "sha256:9c73639b9bd56e2717c2b5627f25f9fd91fa37ba40f2293718980931aa51d01c",
+    "test/native_test.c": "sha256:56a8f8d0e840ea441a3034df320445fc3a323cfd363ea862778899f8f0ea366a",
+    "test/jjson/build_smoke.clj": "sha256:a1f4506953e0ceb6c64014cced15381926caa313a2634f9be3604a3cb43142c2"
+  },
+  "reconciliation": "4 obligations, 4 covered, 0 uncovered",
+  "red_before_green": [
+    {
+      "test": "test/smoke.clj",
+      "red_hash": "sha256:a7625e2efa8408b30d01ea2af8597b267e54f36342aae82e8eedc670f82ff58f",
+      "red": "runner exit 1: ArityException because from-json lacked the required options arity",
+      "green": "runner exit 0; output ok"
+    },
+    {
+      "test": "test/native_test.c",
+      "red_hash": "sha256:638b0ec8150a43459b111b92dec6a0eeefdfbe13845c95b6a408bb8d4e61c994",
+      "red": "compiler exit 1: native/jjson.h was absent and the old bridge required scheme.h",
+      "green": "compiler exit 0 with -Wall -Wextra -Werror; runner exit 0; output ok"
+    }
+  ],
+  "last_results": {
+    "tend": {
+      "phase": "tend",
+      "spec_path": "spec/jjson.allium",
+      "changes": [],
+      "open_questions": [],
+      "summary": "Existing JsonCodec contract already states every production-hardening behavior"
+    },
+    "propagate": {
+      "phase": "propagate",
+      "obligations": {"total": 4, "covered": 4, "uncovered": 0},
+      "uncovered_obligations": [],
+      "generated_tests": [
+        {"path": "test/smoke.clj", "hash": "sha256:c144a55a9a69e35bb3f7d63f4afb117f38773c3439851b2890b4511c568189ad"},
+        {"path": "test/stress.clj", "hash": "sha256:9c73639b9bd56e2717c2b5627f25f9fd91fa37ba40f2293718980931aa51d01c"},
+        {"path": "test/native_test.c", "hash": "sha256:56a8f8d0e840ea441a3034df320445fc3a323cfd363ea862778899f8f0ea366a"},
+        {"path": "test/jjson/build_smoke.clj", "hash": "sha256:a1f4506953e0ceb6c64014cced15381926caa313a2634f9be3604a3cb43142c2"}
+      ],
+      "test_paths": ["test/smoke.clj", "test/stress.clj", "test/native_test.c", "test/jjson/build_smoke.clj"],
+      "open_questions": [],
+      "summary": "4 obligations, 4 covered, 0 uncovered"
+    },
+    "verify": {
+      "phase": "verify",
+      "commands": [
+        "native permissive-parser compile and execution",
+        "jolt test/smoke.clj",
+        "jolt test/stress.clj",
+        "jolt -A:build-smoke build followed by execution from /",
+        "otool sidecar dependency check",
+        "allium check spec/jjson.allium",
+        "allium analyse spec/jjson.allium"
+      ],
+      "verdict": "pass",
+      "ground_truth": "all commands exited 0; native, smoke, stress, and packaged executable printed ok; packaged execution from / had no libjjson sidecar dependency"
+    },
+    "weed": {
+      "phase": "weed",
+      "mode": "check",
+      "verdict": "clean",
+      "divergences": [],
+      "open_questions": [],
+      "artefacts": [
+        "spec/jjson.allium",
+        "src/jjson/core.clj",
+        "native/jjson.c",
+        "native/jjson.h",
+        "native/jjson_chez.c",
+        "native/jjson_internal.h",
+        "test/smoke.clj",
+        "test/stress.clj",
+        "test/native_test.c",
+        "test/jjson/build_smoke.clj"
+      ],
+      "summary": "0 divergences across 4 contract obligations"
+    }
+  },
+  "evidence": {
+    "allium_check": "exit 0; diagnostics empty",
+    "allium_plan": "4 contract-signature obligations",
+    "allium_analyse": "exit 0; diagnostics and findings empty",
+    "forbidden_symbol_audit": "0 matches in project-owned runtime, test, benchmark, and documentation files",
+    "benchmark_jolt": "sha256:249a77b480acc771219b9dae3bd0728423016a391ad927c8e825059bf9819af1",
+    "benchmark_jsonista_jvm": "sha256:50122d24ed7202a75af7d23220684e9c26375003908063aa298561751907c7a3",
+    "benchmark_methodology": "release-built Jolt executable; one fresh process per library and operation; processes strictly serial; correctness outside timing; whole-corpus warmup and calibration; five timed samples; medians with p25/p75; Boost.JSON 1.83 corpus hashes checked; CPU idle gate disabled by user instruction",
+    "benchmark_decode": "jjson median 108.403 MiB/s; data.json on Jolt 1.125 MiB/s; Jsonista on OpenJDK 117.241 MiB/s"
+  },
+  "witness_records": []
+}

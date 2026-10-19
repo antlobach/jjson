@@ -1,0 +1,56 @@
+{
+  "goal": "Create thoroughly tested JJSON bindings with from-json and to-json",
+  "mode": "spec-first",
+  "tick": 1,
+  "active_inner_loop": "verify",
+  "completed_sub_goals": [
+    "Specify the jjson.core boundary",
+    "Propagate boundary tests",
+    "Implement native and Jolt bindings"
+  ],
+  "open_questions": [],
+  "generated_test_hashes": {
+    "test/smoke.clj": "sha256:196b290e809c530a6c3566cc2beccad3761cf42da50fa5f26faeba3eaba23688"
+  },
+  "reconciliation": "3 obligations, 3 covered, 0 uncovered",
+  "red_before_green": [
+    {
+      "test": "test/smoke.clj",
+      "red": "FileNotFoundException: Could not locate jjson/core",
+      "green": "runner exit 0; output ok"
+    }
+  ],
+  "last_results": {
+    "propagate": {
+      "phase": "propagate",
+      "obligations": {"total": 3, "covered": 3, "uncovered": 0},
+      "uncovered_obligations": [],
+      "generated_tests": [
+        {
+          "path": "test/smoke.clj",
+          "hash": "sha256:196b290e809c530a6c3566cc2beccad3761cf42da50fa5f26faeba3eaba23688"
+        }
+      ],
+      "test_paths": ["test/smoke.clj"],
+      "open_questions": [],
+      "summary": "3 obligations, 3 covered, 0 uncovered"
+    },
+    "weed": {
+      "phase": "weed",
+      "mode": "check",
+      "verdict": "clean",
+      "divergences": [],
+      "open_questions": [],
+      "artefacts": ["spec/jjson.allium", "src/jjson/core.clj", "test/smoke.clj"],
+      "summary": "0 divergences"
+    },
+    "witness": {
+      "phase": "witness",
+      "verdict": "PASS",
+      "violations": [],
+      "record_path": ".allium-loop/jjson-bindings.witness.json",
+      "summary": "witness: PASS · checks 7/7 · tests runner exit 0 · tampering none · openQ 0 blocking · tick 1"
+    }
+  },
+  "witness_records": [".allium-loop/jjson-bindings.witness.json"]
+}

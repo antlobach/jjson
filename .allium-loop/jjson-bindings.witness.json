@@ -1,0 +1,44 @@
+{
+  "phase": "witness",
+  "verdict": "PASS",
+  "checks": [
+    {
+      "name": "tests-pass",
+      "result": "pass",
+      "ground_truth": "jolt test/smoke.clj exited 0 and printed ok"
+    },
+    {
+      "name": "no-test-weakened",
+      "result": "pass",
+      "ground_truth": "test/smoke.clj sha256 196b290e809c530a6c3566cc2beccad3761cf42da50fa5f26faeba3eaba23688 matches the tick 1 propagate baseline"
+    },
+    {
+      "name": "coverage",
+      "result": "pass",
+      "ground_truth": "ledger reconciliation: 3 obligations, 3 covered, 0 uncovered; uncovered_obligations is empty"
+    },
+    {
+      "name": "weed-verdict",
+      "result": "pass",
+      "ground_truth": "tick 1 ledger weed verdict is clean with 0 divergences; trace weed is clean"
+    },
+    {
+      "name": "open-questions",
+      "result": "pass",
+      "ground_truth": "spec contains no open-questions section or question markers; ledger, propagate result, weed result, and trace report no open questions, with trace blocking 0 and parked 0"
+    },
+    {
+      "name": "convergence",
+      "result": "pass",
+      "ground_truth": "spec-first tick 1: runner exit 0; weed clean; 0 blocking questions; allium check and allium analyse both exited 0 with empty diagnostics and findings"
+    },
+    {
+      "name": "red-before-green",
+      "result": "pass",
+      "ground_truth": "best-effort: ledger records test/smoke.clj red as FileNotFoundException for jjson/core before green runner exit 0; allium analyse reports no findings, including no vacuous-test finding"
+    }
+  ],
+  "violations": [],
+  "record_path": ".allium-loop/jjson-bindings.witness.json",
+  "summary": "witness: PASS · checks 7/7 · tests runner exit 0 · tampering none · openQ 0 blocking · tick 1"
+}

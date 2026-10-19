@@ -1,0 +1,76 @@
+{:status :running, :phase :build, :completed 0, :total 30, :percentage 0}
+{:status :running, :phase :validate-jolt, :completed 0, :total 30, :percentage 0}
+{:status :running, :phase :validate-jsonista, :completed 0, :total 30, :percentage 0}
+{:status :running, :phase :warmup, :case 1, :cases 6, :library :jjson, :operation :decode, :completed 0, :total 30, :percentage 0, :timestamp-ms 1792334563946}
+{:status :running, :phase :calibration, :case 1, :cases 6, :library :jjson, :operation :decode, :completed 0, :total 30, :percentage 0, :timestamp-ms 1792334567049}
+{:status :running, :phase :sample, :case 1, :cases 6, :library :jjson, :operation :decode, :sample 1, :samples 5, :completed 0, :total 30, :percentage 0, :timestamp-ms 1792334568199}
+{:status :running, :phase :sample-complete, :case 1, :cases 6, :library :jjson, :operation :decode, :sample 1, :samples 5, :completed 1, :total 30, :percentage 3, :timestamp-ms 1792334569213}
+{:status :running, :phase :sample, :case 1, :cases 6, :library :jjson, :operation :decode, :sample 2, :samples 5, :completed 1, :total 30, :percentage 3, :timestamp-ms 1792334569213}
+{:status :running, :phase :sample-complete, :case 1, :cases 6, :library :jjson, :operation :decode, :sample 2, :samples 5, :completed 2, :total 30, :percentage 6, :timestamp-ms 1792334570259}
+{:status :running, :phase :sample, :case 1, :cases 6, :library :jjson, :operation :decode, :sample 3, :samples 5, :completed 2, :total 30, :percentage 6, :timestamp-ms 1792334570259}
+{:status :running, :phase :sample-complete, :case 1, :cases 6, :library :jjson, :operation :decode, :sample 3, :samples 5, :completed 3, :total 30, :percentage 10, :timestamp-ms 1792334571316}
+{:status :running, :phase :sample, :case 1, :cases 6, :library :jjson, :operation :decode, :sample 4, :samples 5, :completed 3, :total 30, :percentage 10, :timestamp-ms 1792334571316}
+{:status :running, :phase :sample-complete, :case 1, :cases 6, :library :jjson, :operation :decode, :sample 4, :samples 5, :completed 4, :total 30, :percentage 13, :timestamp-ms 1792334572335}
+{:status :running, :phase :sample, :case 1, :cases 6, :library :jjson, :operation :decode, :sample 5, :samples 5, :completed 4, :total 30, :percentage 13, :timestamp-ms 1792334572335}
+{:status :running, :phase :sample-complete, :case 1, :cases 6, :library :jjson, :operation :decode, :sample 5, :samples 5, :completed 5, :total 30, :percentage 16, :timestamp-ms 1792334573381}
+{:status :running, :phase :warmup, :case 2, :cases 6, :library :data-json, :operation :decode, :completed 5, :total 30, :percentage 16, :timestamp-ms 1792334574119}
+{:status :running, :phase :calibration, :case 2, :cases 6, :library :data-json, :operation :decode, :completed 5, :total 30, :percentage 16, :timestamp-ms 1792334585530}
+{:status :running, :phase :sample, :case 2, :cases 6, :library :data-json, :operation :decode, :sample 1, :samples 5, :completed 5, :total 30, :percentage 16, :timestamp-ms 1792334596586}
+{:status :running, :phase :sample-complete, :case 2, :cases 6, :library :data-json, :operation :decode, :sample 1, :samples 5, :completed 6, :total 30, :percentage 20, :timestamp-ms 1792334607832}
+{:status :running, :phase :sample, :case 2, :cases 6, :library :data-json, :operation :decode, :sample 2, :samples 5, :completed 6, :total 30, :percentage 20, :timestamp-ms 1792334607833}
+{:status :running, :phase :sample-complete, :case 2, :cases 6, :library :data-json, :operation :decode, :sample 2, :samples 5, :completed 7, :total 30, :percentage 23, :timestamp-ms 1792334622139}
+{:status :running, :phase :sample, :case 2, :cases 6, :library :data-json, :operation :decode, :sample 3, :samples 5, :completed 7, :total 30, :percentage 23, :timestamp-ms 1792334622140}
+{:status :running, :phase :sample-complete, :case 2, :cases 6, :library :data-json, :operation :decode, :sample 3, :samples 5, :completed 8, :total 30, :percentage 26, :timestamp-ms 1792334636402}
+{:status :running, :phase :sample, :case 2, :cases 6, :library :data-json, :operation :decode, :sample 4, :samples 5, :completed 8, :total 30, :percentage 26, :timestamp-ms 1792334636404}
+{:status :running, :phase :sample-complete, :case 2, :cases 6, :library :data-json, :operation :decode, :sample 4, :samples 5, :completed 9, :total 30, :percentage 30, :timestamp-ms 1792334648975}
+{:status :running, :phase :sample, :case 2, :cases 6, :library :data-json, :operation :decode, :sample 5, :samples 5, :completed 9, :total 30, :percentage 30, :timestamp-ms 1792334648975}
+{:status :running, :phase :sample-complete, :case 2, :cases 6, :library :data-json, :operation :decode, :sample 5, :samples 5, :completed 10, :total 30, :percentage 33, :timestamp-ms 1792334660910}
+{:completed 10, :operation :decode, :phase :warmup, :percentage 33, :library :jsonista, :total 30, :status :running, :case 3, :timestamp-ms 1792334664187, :cases 6}
+{:completed 10, :operation :decode, :phase :calibration, :percentage 33, :library :jsonista, :total 30, :status :running, :case 3, :timestamp-ms 1792334667207, :cases 6}
+{:samples 5, :completed 10, :operation :decode, :phase :sample, :percentage 33, :library :jsonista, :sample 1, :total 30, :status :running, :case 3, :timestamp-ms 1792334668389, :cases 6}
+{:samples 5, :completed 11, :operation :decode, :phase :sample-complete, :percentage 36, :library :jsonista, :sample 1, :total 30, :status :running, :case 3, :timestamp-ms 1792334669485, :cases 6}
+{:samples 5, :completed 11, :operation :decode, :phase :sample, :percentage 36, :library :jsonista, :sample 2, :total 30, :status :running, :case 3, :timestamp-ms 1792334669486, :cases 6}
+{:samples 5, :completed 12, :operation :decode, :phase :sample-complete, :percentage 40, :library :jsonista, :sample 2, :total 30, :status :running, :case 3, :timestamp-ms 1792334670572, :cases 6}
+{:samples 5, :completed 12, :operation :decode, :phase :sample, :percentage 40, :library :jsonista, :sample 3, :total 30, :status :running, :case 3, :timestamp-ms 1792334670573, :cases 6}
+{:samples 5, :completed 13, :operation :decode, :phase :sample-complete, :percentage 43, :library :jsonista, :sample 3, :total 30, :status :running, :case 3, :timestamp-ms 1792334671718, :cases 6}
+{:samples 5, :completed 13, :operation :decode, :phase :sample, :percentage 43, :library :jsonista, :sample 4, :total 30, :status :running, :case 3, :timestamp-ms 1792334671719, :cases 6}
+{:samples 5, :completed 14, :operation :decode, :phase :sample-complete, :percentage 46, :library :jsonista, :sample 4, :total 30, :status :running, :case 3, :timestamp-ms 1792334672805, :cases 6}
+{:samples 5, :completed 14, :operation :decode, :phase :sample, :percentage 46, :library :jsonista, :sample 5, :total 30, :status :running, :case 3, :timestamp-ms 1792334672806, :cases 6}
+{:samples 5, :completed 15, :operation :decode, :phase :sample-complete, :percentage 50, :library :jsonista, :sample 5, :total 30, :status :running, :case 3, :timestamp-ms 1792334673828, :cases 6}
+{:status :running, :phase :warmup, :case 4, :cases 6, :library :jjson, :operation :encode, :completed 15, :total 30, :percentage 50, :timestamp-ms 1792334674932}
+{:status :running, :phase :calibration, :case 4, :cases 6, :library :jjson, :operation :encode, :completed 15, :total 30, :percentage 50, :timestamp-ms 1792334678131}
+{:status :running, :phase :sample, :case 4, :cases 6, :library :jjson, :operation :encode, :sample 1, :samples 5, :completed 15, :total 30, :percentage 50, :timestamp-ms 1792334680850}
+{:status :running, :phase :sample-complete, :case 4, :cases 6, :library :jjson, :operation :encode, :sample 1, :samples 5, :completed 16, :total 30, :percentage 53, :timestamp-ms 1792334682683}
+{:status :running, :phase :sample, :case 4, :cases 6, :library :jjson, :operation :encode, :sample 2, :samples 5, :completed 16, :total 30, :percentage 53, :timestamp-ms 1792334682684}
+{:status :running, :phase :sample-complete, :case 4, :cases 6, :library :jjson, :operation :encode, :sample 2, :samples 5, :completed 17, :total 30, :percentage 56, :timestamp-ms 1792334684575}
+{:status :running, :phase :sample, :case 4, :cases 6, :library :jjson, :operation :encode, :sample 3, :samples 5, :completed 17, :total 30, :percentage 56, :timestamp-ms 1792334684575}
+{:status :running, :phase :sample-complete, :case 4, :cases 6, :library :jjson, :operation :encode, :sample 3, :samples 5, :completed 18, :total 30, :percentage 60, :timestamp-ms 1792334686373}
+{:status :running, :phase :sample, :case 4, :cases 6, :library :jjson, :operation :encode, :sample 4, :samples 5, :completed 18, :total 30, :percentage 60, :timestamp-ms 1792334686374}
+{:status :running, :phase :sample-complete, :case 4, :cases 6, :library :jjson, :operation :encode, :sample 4, :samples 5, :completed 19, :total 30, :percentage 63, :timestamp-ms 1792334688170}
+{:status :running, :phase :sample, :case 4, :cases 6, :library :jjson, :operation :encode, :sample 5, :samples 5, :completed 19, :total 30, :percentage 63, :timestamp-ms 1792334688171}
+{:status :running, :phase :sample-complete, :case 4, :cases 6, :library :jjson, :operation :encode, :sample 5, :samples 5, :completed 20, :total 30, :percentage 66, :timestamp-ms 1792334690039}
+{:status :running, :phase :warmup, :case 5, :cases 6, :library :data-json, :operation :encode, :completed 20, :total 30, :percentage 66, :timestamp-ms 1792334691084}
+{:status :running, :phase :calibration, :case 5, :cases 6, :library :data-json, :operation :encode, :completed 20, :total 30, :percentage 66, :timestamp-ms 1792334695626}
+{:status :running, :phase :sample, :case 5, :cases 6, :library :data-json, :operation :encode, :sample 1, :samples 5, :completed 20, :total 30, :percentage 66, :timestamp-ms 1792334698701}
+{:status :running, :phase :sample-complete, :case 5, :cases 6, :library :data-json, :operation :encode, :sample 1, :samples 5, :completed 21, :total 30, :percentage 70, :timestamp-ms 1792334703122}
+{:status :running, :phase :sample, :case 5, :cases 6, :library :data-json, :operation :encode, :sample 2, :samples 5, :completed 21, :total 30, :percentage 70, :timestamp-ms 1792334703123}
+{:status :running, :phase :sample-complete, :case 5, :cases 6, :library :data-json, :operation :encode, :sample 2, :samples 5, :completed 22, :total 30, :percentage 73, :timestamp-ms 1792334707109}
+{:status :running, :phase :sample, :case 5, :cases 6, :library :data-json, :operation :encode, :sample 3, :samples 5, :completed 22, :total 30, :percentage 73, :timestamp-ms 1792334707110}
+{:status :running, :phase :sample-complete, :case 5, :cases 6, :library :data-json, :operation :encode, :sample 3, :samples 5, :completed 23, :total 30, :percentage 76, :timestamp-ms 1792334711656}
+{:status :running, :phase :sample, :case 5, :cases 6, :library :data-json, :operation :encode, :sample 4, :samples 5, :completed 23, :total 30, :percentage 76, :timestamp-ms 1792334711656}
+{:status :running, :phase :sample-complete, :case 5, :cases 6, :library :data-json, :operation :encode, :sample 4, :samples 5, :completed 24, :total 30, :percentage 80, :timestamp-ms 1792334715583}
+{:status :running, :phase :sample, :case 5, :cases 6, :library :data-json, :operation :encode, :sample 5, :samples 5, :completed 24, :total 30, :percentage 80, :timestamp-ms 1792334715583}
+{:status :running, :phase :sample-complete, :case 5, :cases 6, :library :data-json, :operation :encode, :sample 5, :samples 5, :completed 25, :total 30, :percentage 83, :timestamp-ms 1792334719523}
+{:completed 25, :operation :encode, :phase :warmup, :percentage 83, :library :jsonista, :total 30, :status :running, :case 6, :timestamp-ms 1792334724537, :cases 6}
+{:completed 25, :operation :encode, :phase :calibration, :percentage 83, :library :jsonista, :total 30, :status :running, :case 6, :timestamp-ms 1792334727580, :cases 6}
+{:samples 5, :completed 25, :operation :encode, :phase :sample, :percentage 83, :library :jsonista, :sample 1, :total 30, :status :running, :case 6, :timestamp-ms 1792334728703, :cases 6}
+{:samples 5, :completed 26, :operation :encode, :phase :sample-complete, :percentage 86, :library :jsonista, :sample 1, :total 30, :status :running, :case 6, :timestamp-ms 1792334729790, :cases 6}
+{:samples 5, :completed 26, :operation :encode, :phase :sample, :percentage 86, :library :jsonista, :sample 2, :total 30, :status :running, :case 6, :timestamp-ms 1792334729792, :cases 6}
+{:samples 5, :completed 27, :operation :encode, :phase :sample-complete, :percentage 90, :library :jsonista, :sample 2, :total 30, :status :running, :case 6, :timestamp-ms 1792334730995, :cases 6}
+{:samples 5, :completed 27, :operation :encode, :phase :sample, :percentage 90, :library :jsonista, :sample 3, :total 30, :status :running, :case 6, :timestamp-ms 1792334730996, :cases 6}
+{:samples 5, :completed 28, :operation :encode, :phase :sample-complete, :percentage 93, :library :jsonista, :sample 3, :total 30, :status :running, :case 6, :timestamp-ms 1792334732249, :cases 6}
+{:samples 5, :completed 28, :operation :encode, :phase :sample, :percentage 93, :library :jsonista, :sample 4, :total 30, :status :running, :case 6, :timestamp-ms 1792334732250, :cases 6}
+{:samples 5, :completed 29, :operation :encode, :phase :sample-complete, :percentage 96, :library :jsonista, :sample 4, :total 30, :status :running, :case 6, :timestamp-ms 1792334733475, :cases 6}
+{:samples 5, :completed 29, :operation :encode, :phase :sample, :percentage 96, :library :jsonista, :sample 5, :total 30, :status :running, :case 6, :timestamp-ms 1792334733476, :cases 6}
+{:samples 5, :completed 30, :operation :encode, :phase :sample-complete, :percentage 100, :library :jsonista, :sample 5, :total 30, :status :running, :case 6, :timestamp-ms 1792334734909, :cases 6}
+{:status :complete, :phase :done, :completed 30, :total 30, :percentage 100}

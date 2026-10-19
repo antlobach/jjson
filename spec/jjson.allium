@@ -1,0 +1,70 @@
+-- allium: 3
+-- jjson.allium
+-- Scope: The public jjson.core encoding and decoding boundary for Jolt programs.
+-- Includes: JSON value mapping, numeric fidelity, duplicate keys, pretty output,
+--           UTF-8 input validation, optional parsed-key transformation, nesting
+--           limits, concurrency safety, packaged execution, and public errors.
+-- Excludes: Allocation strategy, performance targets, and intermediate layouts.
+
+contract JsonCodec {
+    from_json: (input: Any) -> Any
+    from_json_with_options: (input: Any, options: Map<String, Any>) -> Any
+    to_json: (value: Any) -> String
+    to_json_with_options: (value: Any, options: Map<String, Any>) -> String
+
+    @invariant AcceptedInput
+        -- from_json accepts a JSON string or a byte array containing UTF-8 JSON.
+        -- Every other input type fails with a jjson error. Malformed UTF-8 always
+        -- fails, independent of permissive settings in the underlying parser.
+    @invariant ParsedValues
+        -- Objects become maps with string keys, arrays become vectors, JSON null
+        -- becomes nil, booleans and strings retain their values, integer tokens
+        -- retain their exact values throughout the signed and unsigned 64-bit
+        -- ranges, and other number tokens become doubles.
+
+    @invariant DuplicateObjectKeys
+        -- When an object contains a key more than once, its last value wins.
+    @invariant ParsedKeyTransformation
+        -- from_json_with_options applies options.key_fn to every object key.
+        -- Without key_fn, keys remain strings. If transformed keys collide, the
+        -- last value wins. Invalid options and key functions fail.
+
+
+    @invariant EncodingValues
+        -- Maps become objects; vectors, sequential values, and sets become arrays;
+        -- nil becomes null; booleans, strings, and finite numbers retain their
+        -- values; symbols and characters become strings.
+
+    @invariant EncodingKeys
+        -- String keys are unchanged, keyword keys become name or namespace/name,
+        -- and every other map key uses its string representation.
+
+    @invariant ExactWrittenDecimals
+        -- Bignums and decimal values are emitted from their exact decimal digits.
+        -- Ratios are emitted as doubles.
+
+    @invariant PrettyOption
+        -- to_json_with_options produces pretty output exactly when options.pretty
+        -- is true; otherwise it produces compact output equivalent to to_json.
+
+    @invariant RejectedValues
+        -- NaN, positive or negative infinity, and unsupported values fail rather
+        -- than producing invalid or misleading JSON.
+
+    @invariant DepthLimit
+        -- Inputs nested to depth 1000 are accepted. Inputs nested deeper than
+        -- 1000 fail without overflowing the native stack.
+
+    @invariant ConcurrentIsolation
+        -- Concurrent parsing and writing operations do not share mutable request
+        -- state or corrupt results. Decoding never prevents garbage collection:
+        -- other threads can collect and keep allocating while a decode of any
+        -- size is in progress, and every call terminates without deadlock.
+
+    @invariant PackagedExecution
+        -- A standalone application built with jolt build can use from_json and
+        -- to_json without depending on its working directory or a native sidecar.
+    @invariant ErrorClassification
+        -- Every public failure is ex-info whose data contains
+        -- type = jjson/error.
+}

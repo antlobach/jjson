@@ -1,0 +1,51 @@
+{
+  "phase": "witness",
+  "goal": "jjson-production-hardening",
+  "tick": 2,
+  "verdict": "PASS",
+  "checks": [
+    {
+      "name": "tests-pass",
+      "result": "pass",
+      "ground_truth": "Tick 2 rerun: native_test.c, jolt test/smoke.clj, and jolt test/stress.clj all exited 0 and printed ok. The closed-world executable built, ran from /, printed ok, and otool reported no libjjson sidecar dependency."
+    },
+    {
+      "name": "no-test-weakened",
+      "result": "pass",
+      "ground_truth": "Smoke c144a55a..., stress 9c73639b..., and build_smoke a1f45069... remain byte-identical to the tick 1 baseline. native_test.c changed intentionally to remove obsolete read-tape ABI assertions and now hashes 56a8f8d0...; public behavior coverage remains in the unchanged smoke suite."
+    },
+    {
+      "name": "coverage",
+      "result": "pass",
+      "ground_truth": "Ledger reconciliation is 4 obligations, 4 covered, 0 uncovered; allium plan independently reports the four JsonCodec contract signatures."
+    },
+    {
+      "name": "weed-verdict",
+      "result": "pass",
+      "ground_truth": "Tick 2 audit found zero stale decode-tape ABI references or obsolete GC-progress claims in project runtime, test, benchmark, specification, and documentation surfaces."
+    },
+    {
+      "name": "open-questions",
+      "result": "pass",
+      "ground_truth": "Spec search found no open-question declarations; ledger and trace both report zero blocking and zero parked questions."
+    },
+    {
+      "name": "convergence",
+      "result": "pass",
+      "ground_truth": "Spec-first tick 2: native, smoke, stress, and packaged execution pass; stale-symbol audits are empty; open questions are 0; allium check and allium analyse exited 0 with empty diagnostics and findings."
+    },
+    {
+      "name": "red-before-green",
+      "result": "pass",
+      "ground_truth": "Best-effort: recorded pre-implementation smoke run exited 1 on the missing from-json options arity and native compilation exited 1 on the absent tape header and obsolete scheme.h dependency; both later exited 0. allium analyse reports no vacuous-test finding."
+    },
+    {
+      "name": "benchmark-evidence",
+      "result": "pass",
+      "ground_truth": "Boost.JSON 1.83 evidence contains four Jolt cases with 20 timed samples and two JVM cases with 10 timed samples. Decode uses the same 13 hashed documents for every library; encode uses all 14. Every library-operation runs in a fresh strictly serial process after separate semantic validation; Jolt uses a release-built executable. Median decode throughput is 108.403 MiB/s for jjson, 1.125 MiB/s for data.json on Jolt, and 117.241 MiB/s for Jsonista on OpenJDK. SHA-256 values match ledger evidence: jolt 249a77b4... and jsonista-jvm 50122d24...."
+    }
+  ],
+  "violations": [],
+  "record_path": ".allium-loop/jjson-production-hardening.witness.json",
+  "summary": "witness: PASS · checks 8/8 · direct Chez decoder · native/smoke/stress/package exit 0 · five-sample strictly serial benchmark valid · openQ 0 blocking · tick 2"
+}

@@ -1,0 +1,6 @@
+.cpcache/
+.jolt/
+.DS_Store
+native/libjjson.a
+native/libjjson.dylib
+native/libjjson.so
