@@ -4,33 +4,20 @@
    Decoding parses with yyjson inside collect-safe native calls that write
    compact value records and string characters into locked Chez objects; a
    Scheme loop then builds Jolt values while garbage collection proceeds
-   normally. Encoding uses a malloc-backed tape passed to yyjson. The decoder
-   is intentionally Chez/Jolt-specific."
+   normally. Encoding mirrors it: a Scheme walk writes value records, and
+   collect-safe calls have yyjson write the JSON into a locked result string.
+   The codec is intentionally Chez/Jolt-specific."
   (:require [jolt.ffi :as ffi]
             [jolt.scheme :as scheme]))
 
-(def ^:private max-u32 4294967295)
 (def ^:private min-i64 -9223372036854775808)
 (def ^:private max-i64 9223372036854775807)
-
-(def ^:private tag-null 0)
-(def ^:private tag-false 1)
-(def ^:private tag-true 2)
-(def ^:private tag-sint 3)
-(def ^:private tag-uint 4)
-(def ^:private tag-real 5)
-(def ^:private tag-string 6)
-(def ^:private tag-array 7)
-(def ^:private tag-object 8)
-(def ^:private tag-raw-number 9)
-
-(def ^:private max-depth 1000)
 
 ;; ---------------------------------------------------------------------------
 ;; Native ABI
 ;; ---------------------------------------------------------------------------
 
-;; These declarations anchor the decoder symbols in packaged static builds.
+;; These declarations anchor the codec symbols in packaged static builds.
 ;; Calls use their addresses through Chez foreign procedures below, which pass
 ;; locked Scheme objects to the collect-safe entry points.
 (ffi/defcfn native-decode-string-anchor "jjson_decode_string"
@@ -46,11 +33,14 @@
   [:pointer :pointer :pointer] :int :blocking)
 (ffi/defcfn native-decode-free-anchor "jjson_decode_free"
   [:pointer] :void :blocking)
-(ffi/defcfn native-write-tape "jjson_write_tape"
-  [:pointer :size_t :pointer :size_t :pointer :size_t :pointer :size_t
-   :pointer :size_t :int :pointer :pointer] :pointer :blocking)
-(ffi/defcfn native-alloc "jjson_alloc" [:size_t] :pointer)
-(ffi/defcfn native-free "jjson_free" [:pointer] :void)
+(ffi/defcfn native-encode-anchor "jjson_encode"
+  [:pointer :size_t :pointer :size_t :int] :pointer :blocking)
+(ffi/defcfn native-encode-error-anchor "jjson_encode_error" [:pointer] :pointer)
+(ffi/defcfn native-encode-chars-anchor "jjson_encode_chars" [:pointer] :size_t)
+(ffi/defcfn native-encode-fill-anchor "jjson_encode_fill"
+  [:pointer :pointer] :int :blocking)
+(ffi/defcfn native-encode-free-anchor "jjson_encode_free"
+  [:pointer] :void :blocking)
 
 ;; ---------------------------------------------------------------------------
 ;; Errors
@@ -58,10 +48,6 @@
 
 (defn- json-error [message]
   (ex-info message {:type :jjson/error}))
-
-(defn- error-message [message-out fallback]
-  (let [pointer (ffi/read message-out :pointer)]
-    (if (ffi/null? pointer) fallback (ffi/ptr->string pointer))))
 
 (defn- wrap-error
   "Rethrows jjson errors unchanged and normalizes every other ordinary
@@ -84,6 +70,21 @@
   (scheme/eval-string
    "(if (top-level-bound? 'make-pvec) make-pvec #f)"))
 
+;; Host collection internals the codec calls directly. Record predicates and
+;; accessors (pmap?, pvec?, pvec-cnt, keyword-t?, ...) compile inline and
+;; are exercised when the codec namespaces load their Scheme code.
+(def ^:private missing-host-bindings
+  (scheme/eval-string
+   "(let loop ([names '(make-pvec pv-leaf-for pmap-kv-reduce amap-index
+                        amap-slots->pmap vec-copy-range)])
+      (cond
+        [(null? names) #f]
+        [(top-level-bound? (car names)) (loop (cdr names))]
+        [else (symbol->string (car names))]))"))
+
+(when missing-host-bindings
+  (throw (json-error (str "This Jolt runtime does not expose " missing-host-bindings))))
+
 ;; Jolt byte arrays are host records whose `vec` field holds the bytevector.
 (def ^:private jolt-array-vec
   ((scheme/eval-string
@@ -98,8 +99,8 @@
              [else (loop (+ i 1))]))))")
    (byte-array 0)))
 
-(when-not (and make-pvec jolt-array-vec)
-  (throw (json-error "This Jolt runtime does not expose make-pvec or byte-array storage")))
+(when-not jolt-array-vec
+  (throw (json-error "This Jolt runtime does not expose byte-array storage")))
 
 ;; Builds the decoder. Every C call that touches a Scheme object is
 ;; __collect_safe and receives only objects locked for the duration of the
@@ -176,13 +177,38 @@
                      (make-pvec v))]
                   [else
                    (let ([n (payload off)])
-                     (let loop ([i 0] [m (transient empty-map)])
-                       (if (#3%fx= i n)
-                           (persistent! m)
-                           (let* ([k (read-key)]
-                                  [k (if key-fn (key-fn k) k)]
-                                  [v (read)])
-                             (loop (#3%fx+ i 1) (assoc! m k v))))))])))
+                     (if (#3%fx<= n 8)
+                         ;; Up to 8 entries a map stays an array map, so build
+                         ;; its slots directly: a repeated key keeps its first
+                         ;; position and takes the last value, exactly as
+                         ;; assoc! does.
+                         (let ([slots (make-vector (#3%fx* 2 n))])
+                           (let loop ([i 0] [used 0])
+                             (if (#3%fx= i n)
+                                 (cond
+                                   [(#3%fx= used 0) empty-map]
+                                   [(#3%fx= used (#3%vector-length slots))
+                                    (amap-slots->pmap slots)]
+                                   [else (amap-slots->pmap (vec-copy-range slots 0 used))])
+                                 (let* ([k (read-key)]
+                                        [k (if key-fn (key-fn k) k)]
+                                        [v (read)]
+                                        [j (amap-index slots used k)])
+                                   (if (#3%fx>= j 0)
+                                       (begin
+                                         (#3%vector-set! slots (#3%fx+ j 1) v)
+                                         (loop (#3%fx+ i 1) used))
+                                       (begin
+                                         (#3%vector-set! slots used k)
+                                         (#3%vector-set! slots (#3%fx+ used 1) v)
+                                         (loop (#3%fx+ i 1) (#3%fx+ used 2))))))))
+                         (let loop ([i 0] [m (transient empty-map)])
+                           (if (#3%fx= i n)
+                               (persistent! m)
+                               (let* ([k (read-key)]
+                                      [k (if key-fn (key-fn k) k)]
+                                      [v (read)])
+                                 (loop (#3%fx+ i 1) (assoc! m k v)))))))])))
             (read)))
         (lambda (input key-fn)
           (let ([handle (if (string? input)
@@ -232,259 +258,176 @@
       (throw (json-error "JSON cannot represent NaN or infinity")))
     number))
 
-(defn- check-depth! [depth]
-  (when (>= depth max-depth)
-    (throw (json-error "JSON nesting exceeds the maximum depth of 1000"))))
+(defn- encode-fallback
+  "Normalizes values the Scheme fast path does not recognize. Returns
+   [0 v] to encode v in place of value, [1 digits] for an exact decimal
+   number, or [2 kvs] for a map as a flat key/value vector in iteration
+   order."
+  [value]
+  (cond
+    (integer? value) (if (<= min-i64 value max-i64)
+                       [0 (long value)]
+                       [1 (str value)])
+    (decimal? value) [1 (str value)]
+    (number? value) [0 (finite-double value)]
+    (or (symbol? value) (char? value)) [0 (str value)]
+    (map? value) [2 (persistent!
+                     (reduce (fn [kvs [k v]] (conj! (conj! kvs k) v))
+                             (transient [])
+                             value))]
+    (or (sequential? value) (set? value)) [0 (vec value)]
+    :else (throw (json-error (str "Unsupported JSON value: " (pr-str value))))))
 
-(defn- checked-count [value]
-  (let [length (count value)]
-    (when (> length max-u32)
-      (throw (json-error "JSON collection exceeds the native tape size limit")))
-    length))
-
-(defn- measure-value [root]
-  (let [counters (long-array 5)
-        pieces (volatile! (transient []))]
-    (letfn [(add-counter! [index amount]
-              (let [result (+ (aget counters index) amount)]
-                (when (> result max-u32)
-                  (throw (json-error "JSON value exceeds the native tape size limit")))
-                (aset counters index result)))
-            (add-piece! [bytes]
-              (add-counter! 4 (alength bytes))
-              (vswap! pieces conj! bytes))
-            (add-raw! [digits]
-              (add-counter! 0 5)
-              (add-piece! (.getBytes digits "UTF-8")))
-            (measure! [value depth]
+;; Builds the encoder. One Scheme walk writes 16-byte records (the
+;; jjson_write_records layout: tag, u64 payload at offset 8) and copies every
+;; string's characters into one growing string. Persistent maps, vectors,
+;; strings, numbers, nil, and booleans are handled here; every other value
+;; goes through encode-fallback. The collect-safe C call reads the locked
+;; buffers, has yyjson write the JSON, and a second collect-safe call decodes
+;; it into a locked result string. All managed allocation happens in Scheme.
+(def ^:private make-encoder
+  (scheme/eval-string
+   "(lambda (a-encode a-error a-chars a-fill a-free key->string fallback fail fail-native)
+      (let ([c-encode (foreign-procedure __collect_safe a-encode
+                        (scheme-object size_t scheme-object size_t int) uptr)]
+            [c-error (foreign-procedure a-error (uptr) utf-8)]
+            [c-chars (foreign-procedure a-chars (uptr) size_t)]
+            [c-fill (foreign-procedure __collect_safe a-fill (uptr scheme-object) int)]
+            [c-free (foreign-procedure __collect_safe a-free (uptr) void)])
+        (define (pvec-ref p i)
+          (let-values ([(chunk off) (pv-leaf-for p i)])
+            (vector-ref chunk off)))
+        (define (encode value pretty)
+          (let ([records (make-bytevector 512)] [nrecords 0]
+                [chars (make-string 256)] [nchars 0])
+            (define (record! tag)
+              (let ([off (fx* nrecords 16)])
+                (when (fx> (fx+ off 16) (bytevector-length records))
+                  (let ([bigger (make-bytevector (fx* 2 (bytevector-length records)))])
+                    (bytevector-copy! records 0 bigger 0 off)
+                    (set! records bigger)))
+                (bytevector-u8-set! records off tag)
+                (set! nrecords (fx+ nrecords 1))
+                off))
+            ;; record! may replace `records`, so it must run before `records`
+            ;; is read: argument evaluation order is unspecified.
+            (define (put-u64! tag n)
+              (let ([off (record! tag)])
+                (bytevector-u64-native-set! records (fx+ off 8) n)))
+            (define (put-s64! tag n)
+              (let ([off (record! tag)])
+                (bytevector-s64-native-set! records (fx+ off 8) n)))
+            (define (put-string! tag s)
+              (let ([n (string-length s)])
+                (when (fx> (fx+ nchars n) (string-length chars))
+                  (let ([bigger (make-string (fxmax (fx* 2 (string-length chars))
+                                                    (fx+ nchars n)))])
+                    (string-copy! chars 0 bigger 0 nchars)
+                    (set! chars bigger)))
+                (string-copy! s 0 chars nchars n)
+                (set! nchars (fx+ nchars n))
+                (put-u64! tag n)))
+            (define (put-key! k)
+              (put-string! 6 (cond
+                               [(string? k) k]
+                               [(and (keyword-t? k) (not (keyword-t-ns k))) (keyword-t-name k)]
+                               [else (key->string k)])))
+            (define (check-depth! depth)
+              (when (fx>= depth 1000)
+                (fail \"JSON nesting exceeds the maximum depth of 1000\")))
+            (define (put-object! kvs depth)
+              (check-depth! depth)
+              (let ([n (pvec-cnt kvs)] [child (fx+ depth 1)])
+                (put-u64! 8 (fxquotient n 2))
+                (let loop ([i 0])
+                  (when (fx< i n)
+                    (put-key! (pvec-ref kvs i))
+                    (enc (pvec-ref kvs (fx+ i 1)) child)
+                    (loop (fx+ i 2))))))
+            (define (enc v depth)
               (cond
-                (nil? value)
-                (add-counter! 0 1)
+                [(string? v) (put-string! 6 v)]
+                [(fixnum? v) (if (fx< v 0) (put-s64! 3 v) (put-u64! 4 v))]
+                [(flonum? v)
+                 (if (finite? v)
+                     (let ([off (record! 5)])
+                       (bytevector-ieee-double-native-set! records (fx+ off 8) v))
+                     (fail \"JSON cannot represent NaN or infinity\"))]
+                [(eq? v jolt-nil) (record! 0)]
+                [(eq? v #f) (record! 1)]
+                [(eq? v #t) (record! 2)]
+                [(pmap? v)
+                 (check-depth! depth)
+                 (let* ([off (record! 8)]
+                        [child (fx+ depth 1)]
+                        [n (pmap-kv-reduce v
+                                           (lambda (count k x)
+                                             (put-key! k)
+                                             (enc x child)
+                                             (fx+ count 1))
+                                           0)])
+                   (bytevector-u64-native-set! records (fx+ off 8) n))]
+                [(pvec? v)
+                 (check-depth! depth)
+                 (let ([n (pvec-cnt v)] [child (fx+ depth 1)])
+                   (put-u64! 7 n)
+                   (let loop ([i 0])
+                     (when (fx< i n)
+                       (let-values ([(chunk off) (pv-leaf-for v i)])
+                         (let ([run (fxmin (fx- (vector-length chunk) off) (fx- n i))])
+                           (do ([j 0 (fx+ j 1)]) ((fx= j run))
+                             (enc (vector-ref chunk (fx+ off j)) child))
+                           (loop (fx+ i run)))))))]
+                [(and (integer? v) (exact? v))
+                 (cond
+                   [(and (>= v -9223372036854775808) (< v 0)) (put-s64! 3 v)]
+                   [(and (>= v 0) (<= v 9223372036854775807)) (put-u64! 4 v)]
+                   [else (put-string! 9 (number->string v))])]
+                [(and (rational? v) (exact? v)) (enc (inexact v) depth)]
+                [else
+                 (let ([result (fallback v)])
+                   (case (pvec-ref result 0)
+                     [(0) (enc (pvec-ref result 1) depth)]
+                     [(1) (put-string! 9 (pvec-ref result 1))]
+                     [else (put-object! (pvec-ref result 1) depth)]))]))
+            (enc value 0)
+            (let ([handle (begin
+                            (lock-object records)
+                            (lock-object chars)
+                            (dynamic-wind
+                              void
+                              (lambda () (c-encode records nrecords chars nchars (if pretty 1 0)))
+                              (lambda () (unlock-object records) (unlock-object chars))))])
+              (when (eqv? handle 0) (fail \"Unable to allocate JSON encode state\"))
+              (dynamic-wind
+                void
+                (lambda ()
+                  (let ([message (c-error handle)])
+                    (when message (fail-native message)))
+                  (let ([output (make-string (c-chars handle))])
+                    (lock-object output)
+                    (let ([ok (dynamic-wind
+                                void
+                                (lambda () (c-fill handle output))
+                                (lambda () (unlock-object output)))])
+                      (when (fx= ok 0)
+                        (fail-native (or (c-error handle) \"unknown native error\")))
+                      output)))
+                (lambda () (c-free handle))))))
+        encode))"))
 
-                (or (true? value) (false? value))
-                (add-counter! 0 1)
-
-                (integer? value)
-                (cond
-                  (< value min-i64)
-                  (add-raw! (str value))
-
-                  (neg? value)
-                  (do (add-counter! 0 1)
-                      (add-counter! 1 1))
-
-                  (<= value max-i64)
-                  (do (add-counter! 0 1)
-                      (add-counter! 2 1))
-
-                  :else
-                  (add-raw! (str value)))
-
-                (decimal? value)
-                (add-raw! (str value))
-
-                (ratio? value)
-                (do (finite-double value)
-                    (add-counter! 0 1)
-                    (add-counter! 3 1))
-
-                (number? value)
-                (do (finite-double value)
-                    (add-counter! 0 1)
-                    (add-counter! 3 1))
-
-                (string? value)
-                (do (add-counter! 0 5)
-                    (add-piece! (.getBytes value "UTF-8")))
-
-                (or (symbol? value) (char? value))
-                (do (add-counter! 0 5)
-                    (add-piece! (.getBytes (str value) "UTF-8")))
-
-                (map? value)
-                (do (check-depth! depth)
-                    (add-counter! 0 5)
-                    (checked-count value)
-                    (doseq [[key item] value]
-                      (let [key-bytes (.getBytes (key->string key) "UTF-8")]
-                        (add-counter! 0 4)
-                        (add-piece! key-bytes))
-                      (measure! item (inc depth))))
-
-                (or (sequential? value) (set? value))
-                (do (check-depth! depth)
-                    (add-counter! 0 5)
-                    (checked-count value)
-                    (doseq [item value] (measure! item (inc depth))))
-
-                :else
-                (throw (json-error (str "Unsupported JSON value: " (pr-str value))))))]
-      (measure! root 0)
-      {:counts counters :pieces (persistent! @pieces)})))
-
-(defn- put-byte! [bytes index value]
-  (let [octet (mod value 256)]
-    (aset-byte bytes index (if (> octet 127) (- octet 256) octet))))
-
-(defn- put-u32! [bytes index value]
-  (put-byte! bytes index value)
-  (put-byte! bytes (+ index 1) (quot value 256))
-  (put-byte! bytes (+ index 2) (quot value 65536))
-  (put-byte! bytes (+ index 3) (quot value 16777216)))
-
-(defn- value->tape [value]
-  (let [{:keys [counts pieces]} (measure-value value)
-        ops (byte-array (aget counts 0))
-        sints (long-array (aget counts 1))
-        uints (long-array (aget counts 2))
-        reals (double-array (aget counts 3))
-        strings (byte-array (aget counts 4))
-        indexes (long-array 6)]
-    (letfn [(copy-piece! []
-              (let [piece-index (aget indexes 5)
-                    piece (nth pieces piece-index)
-                    length (alength piece)
-                    string-index (aget indexes 4)]
-                (System/arraycopy piece 0 strings string-index length)
-                (aset indexes 4 (+ string-index length))
-                (aset indexes 5 (inc piece-index))
-                length))
-            (tag! [tag]
-              (let [index (aget indexes 0)]
-                (put-byte! ops index tag)
-                (aset indexes 0 (inc index))))
-            (length! [length]
-              (let [index (aget indexes 0)]
-                (put-u32! ops index length)
-                (aset indexes 0 (+ index 4))))
-            (raw! []
-              (tag! tag-raw-number)
-              (length! (alength (nth pieces (aget indexes 5))))
-              (copy-piece!))
-            (string! []
-              (tag! tag-string)
-              (length! (alength (nth pieces (aget indexes 5))))
-              (copy-piece!))
-            (write! [item depth]
-              (cond
-                (nil? item) (tag! tag-null)
-                (false? item) (tag! tag-false)
-                (true? item) (tag! tag-true)
-
-                (integer? item)
-                (cond
-                  (< item min-i64) (raw!)
-                  (neg? item)
-                  (let [index (aget indexes 1)]
-                    (tag! tag-sint)
-                    (aset sints index item)
-                    (aset indexes 1 (inc index)))
-                  (<= item max-i64)
-                  (let [index (aget indexes 2)]
-                    (tag! tag-uint)
-                    (aset uints index item)
-                    (aset indexes 2 (inc index)))
-                  :else (raw!))
-
-                (decimal? item) (raw!)
-                (number? item)
-                (let [index (aget indexes 3)]
-                  (tag! tag-real)
-                  (aset reals index (finite-double item))
-                  (aset indexes 3 (inc index)))
-
-                (string? item) (string!)
-                (or (symbol? item) (char? item)) (string!)
-
-                (map? item)
-                (do (check-depth! depth)
-                    (tag! tag-object)
-                    (length! (count item))
-                    (doseq [[_ child] item]
-                      (length! (alength (nth pieces (aget indexes 5))))
-                      (copy-piece!)
-                      (write! child (inc depth))))
-
-                (or (sequential? item) (set? item))
-                (do
-                  (check-depth! depth)
-                  (tag! tag-array)
-                  (length! (count item))
-                  (doseq [child item] (write! child (inc depth))))
-
-                :else
-                (throw (json-error
-                        (str "Unsupported JSON value: " (pr-str item))))))]
-      (write! value 0)
-      {:ops ops :sints sints :uints uints :reals reals :strings strings})))
-
-(defn- write-lanes! [ops-ptr sints-ptr uints-ptr reals-ptr strings-ptr
-                     ops sints uints reals strings]
-  (when (pos? (alength ops))
-    (ffi/write-array ops-ptr ops))
-  (when (pos? (alength sints))
-    (ffi/write-array sints-ptr :int64 sints))
-  (when (pos? (alength uints))
-    (ffi/write-array uints-ptr :uint64 uints))
-  (when (pos? (alength reals))
-    (ffi/write-array reals-ptr :double reals))
-  (when (pos? (alength strings))
-    (ffi/write-array strings-ptr strings)))
-
-(defn- write-and-free! [ops-ptr sints-ptr uints-ptr reals-ptr strings-ptr
-                        ops sints uints reals strings pretty]
-  ;; Manual out-parameters: nested with-out forms inline into one enormous
-  ;; top-level form, which trips the AOT artifact writer.
-  (let [output-length-ptr (ffi/alloc (ffi/sizeof :size_t))
-        message-ptr (ffi/alloc (ffi/sizeof :pointer))]
-    (try
-      (let [output (native-write-tape
-                    ops-ptr (alength ops)
-                    sints-ptr (alength sints)
-                    uints-ptr (alength uints)
-                    reals-ptr (alength reals)
-                    strings-ptr (alength strings)
-                    (if pretty 1 0)
-                    output-length-ptr message-ptr)]
-        (when (ffi/null? output)
-          (throw (ex-info (str "JSON write failed: "
-                               (error-message message-ptr "unknown native error"))
-                          {:type :jjson/error
-                           :operation :write})))
-        (try
-          (ffi/read-bytes output (ffi/read output-length-ptr :size_t))
-          (finally
-            (native-free output))))
-      (finally
-        (ffi/free output-length-ptr)
-        (ffi/free message-ptr)))))
-
-(defn- write-json [value pretty]
-  (let [{:keys [ops sints uints reals strings]} (value->tape value)
-        ops-ptr (native-alloc (max 1 (alength ops)))]
-    (try
-      (let [sints-ptr (native-alloc (max 1 (* 8 (alength sints))))]
-        (try
-          (let [uints-ptr (native-alloc (max 1 (* 8 (alength uints))))]
-            (try
-              (let [reals-ptr (native-alloc (max 1 (* 8 (alength reals))))]
-                (try
-                  (let [strings-ptr (native-alloc (max 1 (alength strings)))]
-                    (try
-                      (write-lanes! ops-ptr sints-ptr uints-ptr reals-ptr strings-ptr
-                                    ops sints uints reals strings)
-                      (write-and-free! ops-ptr sints-ptr uints-ptr reals-ptr strings-ptr
-                                       ops sints uints reals strings pretty)
-                      (finally
-                        (native-free strings-ptr))))
-                  (finally
-                    (native-free reals-ptr))))
-              (finally
-                (native-free uints-ptr))))
-          (finally
-            (native-free sints-ptr))))
-      (finally
-        (native-free ops-ptr)))))
+(def ^:private write-json
+  (make-encoder (ffi/find-symbol "jjson_encode")
+                (ffi/find-symbol "jjson_encode_error")
+                (ffi/find-symbol "jjson_encode_chars")
+                (ffi/find-symbol "jjson_encode_fill")
+                (ffi/find-symbol "jjson_encode_free")
+                key->string
+                encode-fallback
+                (fn [message] (throw (json-error message)))
+                (fn [message]
+                  (throw (ex-info (str "JSON write failed: " message)
+                                  {:type :jjson/error :operation :write})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Public API

@@ -33,17 +33,21 @@ void jjson_free(void *p);
 int jjson_validate(char *data, size_t length, const char **message,
                    size_t *position, int *code);
 
-/* Encode a tape into JSON. Wire tags: 0 null, 1 false, 2 true, 3 signed
- * integer, 4 unsigned integer, 5 double, 6 string, 7 array, 8 object,
- * 9 raw JSON number. pretty selects YYJSON_WRITE_PRETTY. Returns a
- * NUL-terminated buffer of *output_length bytes, or NULL on failure with
- * *message set. */
-char *jjson_write_tape(const uint8_t *ops, size_t ops_len,
-                       const int64_t *sints, size_t sint_count,
-                       const uint64_t *uints, size_t uint_count,
-                       const double *reals, size_t real_count,
-                       const char *strings, size_t strings_len,
-                       int pretty, size_t *output_length, const char **message);
+/* Encode value records into JSON. RECORDS holds RECORD_COUNT 16-byte records
+ * in preorder: byte 0 is the tag, bytes 8-15 a native-endian u64 payload.
+ * Tags: 0 null, 1 false, 2 true, 3 signed integer (payload bits), 4 unsigned
+ * integer, 5 double (payload bits), 6 string (payload = character count),
+ * 7 array (payload = element count), 8 object (payload = entry count; each
+ * entry is a tag-6 key record followed by its value), 9 raw JSON number
+ * (payload = character count). String characters are read in record order
+ * from CHARS: each element shifted right by CHAR_SHIFT is a Unicode scalar
+ * value (shift 0 for plain code points). pretty selects YYJSON_WRITE_PRETTY.
+ * Returns a NUL-terminated buffer of *output_length bytes, or NULL on failure
+ * with *message set. */
+char *jjson_write_records(const uint8_t *records, size_t record_count,
+                          const uint32_t *chars, size_t char_count,
+                          unsigned char_shift, int pretty,
+                          size_t *output_length, const char **message);
 
 #ifdef __cplusplus
 }

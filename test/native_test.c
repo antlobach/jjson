@@ -1,4 +1,4 @@
-/* Adversarial native test for JJSON validation and write-tape ABIs.
+/* Adversarial native test for JJSON validation and value-record write ABIs.
  *
  * Built with the deliberately permissive parser flag
  * -DJJSON_READ_FLAGS='(YYJSON_READ_INSITU|YYJSON_READ_ALLOW_INVALID_UNICODE)'
@@ -49,7 +49,7 @@ static int validate_literal(const char *json, size_t length)
 
 static char *build_nested(int depth) {
     size_t length = 2 * (size_t)depth + 1;
-    char *buffer = (char *)malloc(length);
+    char *buffer = (char *)malloc(length + 1); /* callers use strlen */
     char *cursor;
     if (!buffer) {
         fprintf(stderr, "FAIL: depth builder allocation failed\n");
@@ -60,16 +60,28 @@ static char *build_nested(int depth) {
     for (int i = 0; i < depth; i++) *cursor++ = '[';
     *cursor++ = '0';
     for (int i = 0; i < depth; i++) *cursor++ = ']';
+    *cursor = '\0';
     return buffer;
 }
 
-/* Build a write tape holding a single raw-number (tag 9) value. */
+/* Fill record INDEX of BUFFER: tag byte, zero padding, u64 payload. */
+static void put_record(uint8_t *buffer, size_t index, uint8_t tag,
+                       uint64_t payload) {
+    memset(buffer + index * 16, 0, 16);
+    buffer[index * 16] = tag;
+    memcpy(buffer + index * 16 + 8, &payload, sizeof(payload));
+}
+
+/* Write one raw-number (tag 9) record whose digits are plain code points. */
 static char *write_raw_number(const char *digits, int pretty, size_t *output_length,
                               const char **message) {
-    const uint8_t ops[5] = {9,
-                            (uint8_t)strlen(digits), 0, 0, 0};
-    return jjson_write_tape(ops, sizeof(ops), NULL, 0, NULL, 0, NULL, 0,
-                            digits, strlen(digits), pretty, output_length, message);
+    uint8_t records[16];
+    uint32_t chars[64];
+    size_t length = strlen(digits);
+    for (size_t i = 0; i < length; i++) chars[i] = (unsigned char)digits[i];
+    put_record(records, 0, 9, length);
+    return jjson_write_records(records, 1, chars, length, 0, pretty,
+                               output_length, message);
 }
 
 static void check_raw_number(const char *digits, int valid) {
@@ -95,16 +107,17 @@ static void check_raw_number(const char *digits, int valid) {
 }
 
 static void check_plain_write(void) {
-    /* {"k":42}: object tag, count 1, key length 1, signed integer tag; the
-     * key bytes themselves live in the string lane. */
-    const uint8_t ops[10] = {8, 1, 0, 0, 0, 1, 0, 0, 0, 3};
-    const int64_t sints[1] = {42};
-    const char strings[2] = "k";
+    /* {"k":42}: object of one entry, key record, signed integer record. */
+    uint8_t records[48];
+    const uint32_t chars[1] = {'k'};
     size_t output_length = 0;
     const char *message = NULL;
-    char *output = jjson_write_tape(ops, sizeof(ops), sints, 1, NULL, 0,
-                                    NULL, 0, strings, 1, 0,
-                                    &output_length, &message);
+    char *output;
+    put_record(records, 0, 8, 1);
+    put_record(records, 1, 6, 1);
+    put_record(records, 2, 3, 42);
+    output = jjson_write_records(records, 3, chars, 1, 0, 0,
+                                 &output_length, &message);
     CHECK(output != NULL, "compact write succeeds");
     if (output) {
         CHECK(output_length == strlen("{\"k\":42}"), "compact write length");
@@ -114,9 +127,8 @@ static void check_plain_write(void) {
 
     output_length = 0;
     message = NULL;
-    output = jjson_write_tape(ops, sizeof(ops), sints, 1, NULL, 0,
-                              NULL, 0, strings, 1, 1,
-                              &output_length, &message);
+    output = jjson_write_records(records, 3, chars, 1, 0, 1,
+                                 &output_length, &message);
     CHECK(output != NULL, "pretty write succeeds");
     if (output) {
         CHECK(strchr(output, '\n') != NULL, "pretty write indents");
@@ -124,72 +136,102 @@ static void check_plain_write(void) {
         jjson_free(output);
     }
 
-    /* Unsigned lane: 18446744073709551615 round-trips exactly. */
+    /* Unsigned payload: 18446744073709551615 round-trips exactly. */
     output_length = 0;
     message = NULL;
+    put_record(records, 0, 4, UINT64_MAX);
+    output = jjson_write_records(records, 1, NULL, 0, 0, 0,
+                                 &output_length, &message);
+    CHECK(output != NULL, "unsigned integer write succeeds");
+    if (output) {
+        CHECK(output_length == 20 &&
+              memcmp(output, "18446744073709551615", 20) == 0,
+              "maximum unsigned integer preserved");
+        jjson_free(output);
+    }
+
+    /* Shifted characters: Chez cells hold codepoint << 8 | 0x16, and U+00E9
+     * plus U+1F600 must come out as UTF-8. */
     {
-        const uint8_t uops[1] = {4};
-        const uint64_t uints[1] = {UINT64_MAX};
-        output = jjson_write_tape(uops, sizeof(uops), NULL, 0, uints, 1,
-                                  NULL, 0, NULL, 0, 0, &output_length, &message);
-        CHECK(output != NULL, "unsigned integer write succeeds");
+        const uint32_t cells[2] = {(0xE9u << 8) | 0x16, (0x1F600u << 8) | 0x16};
+        const char *expected = "\"\xc3\xa9\xf0\x9f\x98\x80\"";
+        output_length = 0;
+        message = NULL;
+        put_record(records, 0, 6, 2);
+        output = jjson_write_records(records, 1, cells, 2, 8, 0,
+                                     &output_length, &message);
+        CHECK(output != NULL, "shifted string write succeeds");
         if (output) {
-            CHECK(output_length == 20 &&
-                  memcmp(output, "18446744073709551615", 20) == 0,
-                  "maximum unsigned integer preserved");
+            CHECK(output_length == strlen(expected) &&
+                  memcmp(output, expected, output_length) == 0,
+                  "shifted characters encode as UTF-8");
             jjson_free(output);
         }
     }
 }
 
-static void check_tape_corruption(void) {
+static void expect_write_failure(const uint8_t *records, size_t record_count,
+                                 const uint32_t *chars, size_t char_count,
+                                 const char *label) {
     size_t output_length = 0;
     const char *message = NULL;
-    char *output;
+    char *output = jjson_write_records(records, record_count, chars, char_count,
+                                       0, 0, &output_length, &message);
+    CHECK(output == NULL, label);
+    CHECK(message != NULL, label);
+    if (output) jjson_free(output);
+}
+
+static void check_record_corruption(void) {
+    uint8_t records[48];
 
     /* Array claiming two elements with nothing behind it. */
-    {
-        const uint8_t ops[5] = {7, 2, 0, 0, 0};
-        output = jjson_write_tape(ops, sizeof(ops), NULL, 0, NULL, 0,
-                                  NULL, 0, NULL, 0, 0, &output_length, &message);
-        CHECK(output == NULL, "truncated array tape fails");
-        CHECK(message != NULL, "truncated array tape reports a message");
-    }
+    put_record(records, 0, 7, 2);
+    expect_write_failure(records, 1, NULL, 0, "truncated array records fail");
+    /* Array length far beyond the records. */
+    put_record(records, 0, 7, UINT64_C(1) << 40);
+    expect_write_failure(records, 1, NULL, 0, "oversized array length fails");
+    /* Object size far beyond the records. */
+    put_record(records, 0, 8, UINT64_C(1) << 40);
+    expect_write_failure(records, 1, NULL, 0, "oversized object size fails");
     /* Unknown tag. */
+    put_record(records, 0, 15, 0);
+    expect_write_failure(records, 1, NULL, 0, "unknown record tag fails");
+    /* Raw number reaching past the character buffer. */
+    put_record(records, 0, 9, 5);
+    expect_write_failure(records, 1, NULL, 0, "raw number past characters fails");
+    /* Complete value with a trailing record. */
+    put_record(records, 0, 2, 0);
+    put_record(records, 1, 0, 0);
+    expect_write_failure(records, 2, NULL, 0, "trailing records fail");
+    /* Unused trailing characters. */
     {
-        const uint8_t ops[1] = {15};
-        output = jjson_write_tape(ops, sizeof(ops), NULL, 0, NULL, 0,
-                                  NULL, 0, NULL, 0, 0, &output_length, &message);
-        CHECK(output == NULL, "unknown tape tag fails");
+        const uint32_t chars[1] = {'x'};
+        put_record(records, 0, 0, 0);
+        expect_write_failure(records, 1, chars, 1, "trailing characters fail");
     }
-    /* Raw number tag pointing past the string lane. */
-    {
-        const uint8_t ops[5] = {9, 5, 0, 0, 0};
-        output = jjson_write_tape(ops, sizeof(ops), NULL, 0, NULL, 0,
-                                  NULL, 0, NULL, 0, 0, &output_length, &message);
-        CHECK(output == NULL, "raw number past string lane fails");
-    }
-    /* Complete value with trailing operations. */
-    {
-        const uint8_t ops[2] = {2, 0};
-        output = jjson_write_tape(ops, sizeof(ops), NULL, 0, NULL, 0,
-                                  NULL, 0, NULL, 0, 0, &output_length, &message);
-        CHECK(output == NULL, "trailing tape data fails");
-    }
-    /* Missing operation tape entirely. */
-    {
-        output = jjson_write_tape(NULL, 0, NULL, 0, NULL, 0,
-                                  NULL, 0, NULL, 0, 0, &output_length, &message);
-        CHECK(output == NULL, "empty write tape fails");
-    }
+    /* Missing records entirely. */
+    expect_write_failure(NULL, 0, NULL, 0, "empty records fail");
     /* Non-finite double. */
     {
-        const uint8_t ops[1] = {5};
-        const double reals[1] = {1.0 / 0.0};
-        output = jjson_write_tape(ops, sizeof(ops), NULL, 0, NULL, 0,
-                                  reals, 1, NULL, 0, 0, &output_length, &message);
-        CHECK(output == NULL, "non-finite double fails");
-        CHECK(message != NULL, "non-finite double reports a message");
+        double infinity = 1.0 / 0.0;
+        uint64_t bits;
+        memcpy(&bits, &infinity, sizeof(bits));
+        put_record(records, 0, 5, bits);
+        expect_write_failure(records, 1, NULL, 0, "non-finite double fails");
+    }
+    /* Object key that is not a string record. */
+    put_record(records, 0, 8, 1);
+    put_record(records, 1, 3, 1);
+    put_record(records, 2, 3, 2);
+    expect_write_failure(records, 3, NULL, 0, "non-string object key fails");
+    /* Invalid code points. */
+    {
+        const uint32_t surrogate[1] = {0xD800};
+        const uint32_t too_large[1] = {0x110000};
+        put_record(records, 0, 6, 1);
+        expect_write_failure(records, 1, surrogate, 1, "surrogate code point fails");
+        expect_write_failure(records, 1, too_large, 1, "code point above U+10FFFF fails");
     }
 }
 
@@ -275,7 +317,7 @@ int main(void) {
     check_raw_number("1e+-1", 0);
 
     check_plain_write();
-    check_tape_corruption();
+    check_record_corruption();
 
     /* Allocation guards: zero is legal, unwrappable overflow is not. */
     scratch = jjson_alloc(0);

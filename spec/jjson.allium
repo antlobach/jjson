@@ -57,9 +57,10 @@ contract JsonCodec {
 
     @invariant ConcurrentIsolation
         -- Concurrent parsing and writing operations do not share mutable request
-        -- state or corrupt results. Decoding never prevents garbage collection:
-        -- other threads can collect and keep allocating while a decode of any
-        -- size is in progress, and every call terminates without deadlock.
+        -- state or corrupt results. Neither decoding nor encoding prevents
+        -- garbage collection: other threads can collect and keep allocating
+        -- while an operation of any size is in progress, and every call
+        -- terminates without deadlock.
 
     @invariant PackagedExecution
         -- A standalone application built with jolt build can use from_json and

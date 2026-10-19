@@ -28,6 +28,7 @@
  * keeps a running character offset.
  */
 
+#include "jjson.h"
 #include "jjson_internal.h"
 #include "scheme.h"
 
@@ -174,10 +175,10 @@ static void put_record(Writer *writer, uint8_t tag, uint32_t aux,
 
 #define CHEZ_CHAR(codepoint) ((string_char)(((uptr)(codepoint) << 8) | 0x16))
 
-/* Decodes validated UTF-8 into Chez string cells; returns characters written. */
-static size_t put_chars(Writer *writer, const char *bytes, size_t length) {
-    string_char *out = writer->chars + writer->position;
-    size_t start = writer->position;
+/* Decodes validated UTF-8 into Chez string cells; returns cells written. */
+static size_t utf8_to_cells(string_char *cells, const char *bytes,
+                            size_t length) {
+    string_char *out = cells;
     size_t input = 0;
     while (input < length) {
         while (input + 8 <= length) {
@@ -220,8 +221,14 @@ static size_t put_chars(Writer *writer, const char *bytes, size_t length) {
             *out++ = CHEZ_CHAR(codepoint);
         }
     }
-    writer->position = (size_t)(out - writer->chars);
-    return writer->position - start;
+    return (size_t)(out - cells);
+}
+
+static size_t put_chars(Writer *writer, const char *bytes, size_t length) {
+    size_t written = utf8_to_cells(writer->chars + writer->position, bytes,
+                                   length);
+    writer->position += written;
+    return written;
 }
 
 static void fill_value(Writer *writer, yyjson_val *value) {
@@ -341,47 +348,65 @@ static Decode *parse_input(Decode *decode, char *input, size_t length) {
  * the decode state itself cannot be allocated. */
 JJSON_EXPORT void *jjson_decode_string(ptr string) {
     Decode *decode = new_decode();
+    const string_char *cells;
     size_t length;
-    size_t bytes = 0;
-    size_t index;
-    size_t position = 0;
+    size_t index = 0;
     char *buffer;
+    char *out;
     if (!decode) return NULL;
     if (!Sstringp(string)) {
         decode->message = "JSON input must be a string";
         return decode;
     }
     length = (size_t)Sstring_length(string);
-    for (index = 0; index < length; index++) {
-        uint32_t codepoint = (uint32_t)Sstring_ref(string, (iptr)index);
-        bytes += codepoint < 0x80 ? 1 : codepoint < 0x800 ? 2 :
-                 codepoint < 0x10000 ? 3 : 4;
+    if (length > (SIZE_MAX - YYJSON_PADDING_SIZE) / 4) {
+        decode->message = "JSON input is too large";
+        return decode;
     }
-    buffer = (char *)malloc(bytes + YYJSON_PADDING_SIZE);
+    /* One pass into a worst-case buffer; untouched pages are never
+     * committed, so the 4x reservation costs only address space. */
+    buffer = (char *)malloc(length * 4 + YYJSON_PADDING_SIZE);
     if (!buffer) {
         decode->message = "Unable to allocate UTF-8 input buffer";
         return decode;
     }
-    for (index = 0; index < length; index++) {
-        uint32_t codepoint = (uint32_t)Sstring_ref(string, (iptr)index);
-        if (codepoint < 0x80) {
-            buffer[position++] = (char)codepoint;
-        } else if (codepoint < 0x800) {
-            buffer[position++] = (char)(0xC0 | (codepoint >> 6));
-            buffer[position++] = (char)(0x80 | (codepoint & 0x3F));
-        } else if (codepoint < 0x10000) {
-            buffer[position++] = (char)(0xE0 | (codepoint >> 12));
-            buffer[position++] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
-            buffer[position++] = (char)(0x80 | (codepoint & 0x3F));
-        } else {
-            buffer[position++] = (char)(0xF0 | (codepoint >> 18));
-            buffer[position++] = (char)(0x80 | ((codepoint >> 12) & 0x3F));
-            buffer[position++] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
-            buffer[position++] = (char)(0x80 | (codepoint & 0x3F));
+    cells = (const string_char *)TO_VOIDP((uptr)string + 9);
+    out = buffer;
+    while (index < length) {
+        /* A cell holds codepoint << 8 | tag, so four ASCII characters OR to
+         * a value below 0x8000. */
+        while (length - index >= 4 &&
+               (cells[index] | cells[index + 1] | cells[index + 2] |
+                cells[index + 3]) < 0x8000) {
+            out[0] = (char)(cells[index] >> 8);
+            out[1] = (char)(cells[index + 1] >> 8);
+            out[2] = (char)(cells[index + 2] >> 8);
+            out[3] = (char)(cells[index + 3] >> 8);
+            out += 4;
+            index += 4;
+        }
+        if (index >= length) break;
+        {
+            uint32_t codepoint = (uint32_t)(cells[index++] >> 8);
+            if (codepoint < 0x80) {
+                *out++ = (char)codepoint;
+            } else if (codepoint < 0x800) {
+                *out++ = (char)(0xC0 | (codepoint >> 6));
+                *out++ = (char)(0x80 | (codepoint & 0x3F));
+            } else if (codepoint < 0x10000) {
+                *out++ = (char)(0xE0 | (codepoint >> 12));
+                *out++ = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+                *out++ = (char)(0x80 | (codepoint & 0x3F));
+            } else {
+                *out++ = (char)(0xF0 | (codepoint >> 18));
+                *out++ = (char)(0x80 | ((codepoint >> 12) & 0x3F));
+                *out++ = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+                *out++ = (char)(0x80 | (codepoint & 0x3F));
+            }
         }
     }
-    memset(buffer + bytes, 0, YYJSON_PADDING_SIZE);
-    return parse_input(decode, buffer, bytes);
+    memset(out, 0, YYJSON_PADDING_SIZE);
+    return parse_input(decode, buffer, (size_t)(out - buffer));
 }
 
 /* BYTES must be a Chez bytevector locked by the caller. It is copied, never
@@ -457,4 +482,73 @@ JJSON_EXPORT void jjson_decode_free(void *handle) {
     free(decode->intern);
     free(decode->input);
     free(decode);
+}
+
+/* ---------------------------------------------------------------------------
+ * Encoding
+ *
+ * Scheme walks the Jolt value into 16-byte records (the jjson_write_records
+ * layout) plus one character string, locks both, and calls jjson_encode
+ * (__collect_safe). yyjson writes the UTF-8 output into native memory; Scheme
+ * then allocates a string of jjson_encode_chars characters, locks it, and
+ * jjson_encode_fill (__collect_safe) decodes the output into it.
+ * ------------------------------------------------------------------------- */
+
+typedef struct {
+    char *output;
+    size_t length;
+    size_t char_count;
+    const char *message;
+} Encode;
+
+JJSON_EXPORT void *jjson_encode(ptr records, size_t record_count, ptr chars,
+                                size_t char_count, int pretty) {
+    Encode *encode = (Encode *)calloc(1, sizeof(Encode));
+    if (!encode) return NULL;
+    if (!Sbytevectorp(records) || !Sstringp(chars) ||
+        record_count > (size_t)Sbytevector_length(records) / JJSON_RECORD_BYTES ||
+        char_count > (size_t)Sstring_length(chars)) {
+        encode->message = "JSON encode buffers have the wrong size";
+        return encode;
+    }
+    encode->output = jjson_write_records(
+        (const uint8_t *)Sbytevector_data(records), record_count,
+        (const uint32_t *)TO_VOIDP((uptr)chars + 9), char_count, 8, pretty,
+        &encode->length, &encode->message);
+    if (!encode->output) {
+        if (!encode->message) encode->message = "JSON write failed";
+        return encode;
+    }
+    encode->char_count = utf8_chars(encode->output, encode->length);
+    return encode;
+}
+
+JJSON_EXPORT const char *jjson_encode_error(void *handle) {
+    return ((Encode *)handle)->message;
+}
+
+JJSON_EXPORT size_t jjson_encode_chars(void *handle) {
+    return ((Encode *)handle)->char_count;
+}
+
+/* OUTPUT must be a Chez string, locked by the caller, of exactly
+ * jjson_encode_chars characters. Returns nonzero on success. */
+JJSON_EXPORT int jjson_encode_fill(void *handle, ptr output) {
+    Encode *encode = (Encode *)handle;
+    if (encode->message || !encode->output) return 0;
+    if (!Sstringp(output) ||
+        (size_t)Sstring_length(output) != encode->char_count) {
+        encode->message = "JSON output buffer has the wrong size";
+        return 0;
+    }
+    utf8_to_cells((string_char *)TO_VOIDP((uptr)output + 9), encode->output,
+                  encode->length);
+    return 1;
+}
+
+JJSON_EXPORT void jjson_encode_free(void *handle) {
+    Encode *encode = (Encode *)handle;
+    if (!encode) return;
+    free(encode->output);
+    free(encode);
 }

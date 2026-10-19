@@ -37,24 +37,34 @@ Host:
 
 ## Results
 
-### Collect-safe decoder
+### Current codec
 
-The current decoder never holds the Chez runtime inside native code. Its decode
-cases were re-measured on the same host with the same method, one fresh process
-per library, against `clojure.data.json` on Jolt only:
+Measured on the same host with the same method, one fresh process per case,
+for the current collect-safe decoder and record-based encoder. Throughput in
+MiB/s; encode throughput is normalized to source-document bytes.
 
 | Runtime | Library | Operation | Documents | Batch iterations | p25 | Median | p75 |
 |---|---|---|---:|---:|---:|---:|---:|
-| Jolt | jjson | decode | 13 | 9 | 109.909 | 110.445 | 111.517 |
-| Jolt | data.json | decode | 13 | 1 | 1.289 | 1.297 | 1.303 |
+| Jolt | jjson | decode | 13 | 10 | 127.408 | 134.632 | 134.893 |
+| Jolt | data.json | decode | 13 | 1 | 1.243 | 1.267 | 1.272 |
+| Jolt | jjson | encode | 14 | 7 | 96.918 | 97.429 | 97.445 |
+| Jolt | data.json | encode | 14 | 1 | 5.192 | 5.205 | 5.207 |
+| JVM | Jsonista | encode | 14 | 14 | 198.112 | 198.271 | 198.285 |
 
-Decode: jjson is 85.17× data.json. Raw results:
-[`bench/results/jolt-decode-collect-safe.edn`](bench/results/jolt-decode-collect-safe.edn).
+Median ratios:
 
-### Full run
+- Decode: jjson is 106.28× data.json.
+- Encode: jjson is 18.72× data.json; Jsonista is 2.04× jjson.
 
-The table below is the complete `bench/run.sh` run. Its jjson decode row
-predates the collect-safe decoder.
+Jsonista executes on OpenJDK, not Jolt; that row is a cross-runtime
+comparison. Raw results:
+[`bench/results/jolt-current.edn`](bench/results/jolt-current.edn) and
+[`bench/results/jsonista-jvm-encode-current.edn`](bench/results/jsonista-jvm-encode-current.edn).
+
+### Earlier full run
+
+The table below is the complete `bench/run.sh` run from before the
+collect-safe codec; its jjson rows describe the previous implementation.
 
 Throughput in MiB/s. Encode throughput is normalized to source-document bytes,
 giving every library the same workload denominator.

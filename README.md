@@ -54,15 +54,19 @@ Every public failure is `ex-info` with `{:type :jjson/error}` in `ex-data`.
 
 ## Native execution
 
-`from-json` never holds the Chez runtime while native code runs, so garbage collection on other threads proceeds during a decode of any size. Decoding has three steps:
+Neither `from-json` nor `to-json` holds the Chez runtime while native code runs, so garbage collection on other threads proceeds during a decode or encode of any size. Decoding has three steps:
 
 1. A collect-safe (`__collect_safe`) native call reads the locked input string or byte array, performs strict UTF-8 validation and yyjson parsing, and counts the values and characters the result needs.
 2. Scheme allocates one character string and one record bytevector of exactly that size; a second collect-safe call fills them, locked, with one 16-byte record per JSON value and the decoded characters of every string. Repeated object keys are emitted once.
-3. A Scheme loop walks the records and builds strings, numbers, persistent vectors, and maps. All managed allocation happens here, in ordinary Scheme code, where collection may run at any point.
+3. A Scheme loop walks the records and builds strings, numbers, persistent vectors, and maps; objects of up to eight entries are built directly as array maps. All managed allocation happens here, in ordinary Scheme code, where collection may run at any point.
 
-Native code touches only objects locked for the duration of its call and never allocates Scheme objects. All parser and key-interning state is request-local.
+Encoding is the mirror image:
 
-Encoding retains a malloc-backed tape and uses Jolt's blocking FFI mode. Its native work remains collect-safe and does not touch Chez objects.
+1. One Scheme walk writes a 16-byte record per value into a growing bytevector and copies every string's characters into one growing string. Persistent maps and vectors, strings, numbers, nil, and booleans are handled directly; other values (sets, seqs, sorted maps, records, symbols, characters, decimals, ratios) are normalized by a Clojure fallback.
+2. A collect-safe call reads both buffers, locked, and has yyjson write the JSON, so number formatting and pretty layout are yyjson's.
+3. Scheme allocates the result string at its exact length; a second collect-safe call decodes the output into it, locked.
+
+Native code touches only objects locked for the duration of its call and never allocates Scheme objects. All parser, writer, and key-interning state is request-local.
 
 Standalone applications link `libjjson.a` into the executable:
 
