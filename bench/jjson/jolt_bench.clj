@@ -1,13 +1,11 @@
 (ns jjson.jolt-bench
-  (:require [jolt.time]
-            [clojure.data.json :as data-json]
+  (:require [clojure.data.json :as data-json]
             [jjson.core :as jj]
             [jjson.harness :as harness]))
 
 (def libraries
   {:jjson "working-tree"
-   :clojure.data.json "2.5.2"
-   :jolt.time "0.0.8"})
+   :clojure.data.json "2.5.2"})
 
 (defn data-json-read [text]
   (data-json/read-str text :key-fn identity))
