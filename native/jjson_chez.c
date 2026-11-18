@@ -30,7 +30,7 @@
 
 #include "jjson.h"
 #include "jjson_internal.h"
-#include "scheme.h"
+#include "jjson_chez.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -58,7 +58,8 @@ enum {
     REC_OBJECT = 8,
     REC_KEY_NEW = 9,   /* first occurrence of an interned key: aux id, length */
     REC_KEY_REF = 10,  /* repeated interned key: aux id */
-    REC_KEY_PLAIN = 11 /* key outside the intern table: length */
+    REC_KEY_PLAIN = 11, /* key outside the intern table: length */
+    REC_RAW_NUMBER = 12 /* exact numeric token: character count */
 };
 
 typedef struct {
@@ -77,6 +78,8 @@ typedef struct {
     size_t record_count;
     size_t char_count;
     const char *message;
+    size_t error_position;
+    int error_code;
 } Decode;
 
 typedef struct {
@@ -137,7 +140,9 @@ static size_t utf8_chars(const char *bytes, size_t length) {
 }
 
 static void count_value(Decode *decode, yyjson_val *value) {
-    if (yyjson_is_str(value)) {
+    if (yyjson_is_raw(value)) {
+        decode->char_count += yyjson_get_len(value);
+    } else if (yyjson_is_str(value)) {
         decode->char_count += utf8_chars(yyjson_get_str(value),
                                          yyjson_get_len(value));
     } else if (yyjson_is_arr(value)) {
@@ -232,6 +237,11 @@ static size_t put_chars(Writer *writer, const char *bytes, size_t length) {
 }
 
 static void fill_value(Writer *writer, yyjson_val *value) {
+    if (yyjson_is_raw(value)) {
+        put_record(writer, REC_RAW_NUMBER, 0, yyjson_get_len(value));
+        put_chars(writer, yyjson_get_raw(value), yyjson_get_len(value));
+        return;
+    }
     switch (yyjson_get_type(value)) {
     case YYJSON_TYPE_NULL:
         put_record(writer, REC_NULL, 0, 0);
@@ -323,12 +333,12 @@ static Decode *new_decode(void) {
 }
 
 /* Takes ownership of INPUT (LENGTH bytes plus zeroed yyjson padding). */
-static Decode *parse_input(Decode *decode, char *input, size_t length) {
-    size_t position = 0;
-    int code = 0;
+static Decode *parse_input(Decode *decode, char *input, size_t length,
+                           int raw_numbers) {
     decode->input = input;
-    decode->document = jjson_internal_read_doc(input, length, &decode->message,
-                                               &position, &code);
+    decode->document = jjson_internal_read_doc_flags(
+        input, length, &decode->message, &decode->error_position,
+        &decode->error_code, raw_numbers ? YYJSON_READ_NUMBER_AS_RAW : 0);
     if (!decode->document) {
         if (!decode->message) decode->message = "Unknown JSON read error";
         return decode;
@@ -346,7 +356,7 @@ static Decode *parse_input(Decode *decode, char *input, size_t length) {
 
 /* STRING must be a Chez string locked by the caller. Returns NULL only when
  * the decode state itself cannot be allocated. */
-JJSON_EXPORT void *jjson_decode_string(ptr string) {
+JJSON_EXPORT void *jjson_decode_string(ptr string, int raw_numbers) {
     Decode *decode = new_decode();
     const string_char *cells;
     size_t length;
@@ -406,12 +416,12 @@ JJSON_EXPORT void *jjson_decode_string(ptr string) {
         }
     }
     memset(out, 0, YYJSON_PADDING_SIZE);
-    return parse_input(decode, buffer, (size_t)(out - buffer));
+    return parse_input(decode, buffer, (size_t)(out - buffer), raw_numbers);
 }
 
 /* BYTES must be a Chez bytevector locked by the caller. It is copied, never
  * modified. Returns NULL only when the decode state cannot be allocated. */
-JJSON_EXPORT void *jjson_decode_bytes(ptr bytes) {
+JJSON_EXPORT void *jjson_decode_bytes(ptr bytes, int raw_numbers) {
     Decode *decode = new_decode();
     size_t length;
     char *buffer;
@@ -428,11 +438,19 @@ JJSON_EXPORT void *jjson_decode_bytes(ptr bytes) {
     }
     if (length) memcpy(buffer, Sbytevector_data(bytes), length);
     memset(buffer + length, 0, YYJSON_PADDING_SIZE);
-    return parse_input(decode, buffer, length);
+    return parse_input(decode, buffer, length, raw_numbers);
 }
 
 JJSON_EXPORT const char *jjson_decode_error(void *handle) {
     return ((Decode *)handle)->message;
+}
+
+JJSON_EXPORT size_t jjson_decode_error_position(void *handle) {
+    return ((Decode *)handle)->error_position;
+}
+
+JJSON_EXPORT int jjson_decode_error_code(void *handle) {
+    return ((Decode *)handle)->error_code;
 }
 
 JJSON_EXPORT size_t jjson_decode_records(void *handle) {
@@ -454,6 +472,10 @@ JJSON_EXPORT int jjson_decode_fill(void *handle, ptr chars, ptr records) {
     Decode *decode = (Decode *)handle;
     Writer writer;
     if (decode->message || !decode->document) return 0;
+    if (decode->record_count > SIZE_MAX / JJSON_RECORD_BYTES) {
+        decode->message = "JSON decode record buffer is too large";
+        return 0;
+    }
     if (!Sstringp(chars) || !Sbytevectorp(records) ||
         (size_t)Sstring_length(chars) != decode->char_count ||
         (size_t)Sbytevector_length(records) !=
@@ -513,13 +535,15 @@ JJSON_EXPORT void *jjson_encode(ptr records, size_t record_count, ptr chars,
     }
     encode->output = jjson_write_records(
         (const uint8_t *)Sbytevector_data(records), record_count,
-        (const uint32_t *)TO_VOIDP((uptr)chars + 9), char_count, 8, pretty,
+        (const uint32_t *)TO_VOIDP((uptr)chars + 9), char_count, 8, pretty & 1,
         &encode->length, &encode->message);
     if (!encode->output) {
         if (!encode->message) encode->message = "JSON write failed";
         return encode;
     }
-    encode->char_count = utf8_chars(encode->output, encode->length);
+    if (!(pretty & 2)) {
+        encode->char_count = utf8_chars(encode->output, encode->length);
+    }
     return encode;
 }
 
@@ -529,6 +553,25 @@ JJSON_EXPORT const char *jjson_encode_error(void *handle) {
 
 JJSON_EXPORT size_t jjson_encode_chars(void *handle) {
     return ((Encode *)handle)->char_count;
+}
+
+JJSON_EXPORT size_t jjson_encode_bytes(void *handle) {
+    return ((Encode *)handle)->length;
+}
+
+/* OUTPUT is an exactly sized bytevector pinned by the caller. */
+JJSON_EXPORT int jjson_encode_fill_bytes(void *handle, ptr output) {
+    Encode *encode = (Encode *)handle;
+    if (encode->message || !encode->output) return 0;
+    if (!Sbytevectorp(output) ||
+        (size_t)Sbytevector_length(output) != encode->length) {
+        encode->message = "JSON output buffer has the wrong size";
+        return 0;
+    }
+    if (encode->length) {
+        memcpy(Sbytevector_data(output), encode->output, encode->length);
+    }
+    return 1;
 }
 
 /* OUTPUT must be a Chez string, locked by the caller, of exactly

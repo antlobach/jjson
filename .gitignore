@@ -4,3 +4,6 @@
 native/libjjson.a
 native/libjjson.dylib
 native/libjjson.so
+.cache/
+.nrepl-port
+native/.jjson-install.*/

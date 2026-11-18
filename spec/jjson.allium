@@ -11,6 +11,8 @@ contract JsonCodec {
     from_json_with_options: (input: Any, options: Map<String, Any>) -> Any
     to_json: (value: Any) -> String
     to_json_with_options: (value: Any, options: Map<String, Any>) -> String
+    to_json_bytes: (value: Any) -> Any
+    to_json_bytes_with_options: (value: Any, options: Map<String, Any>) -> Any
 
     @invariant AcceptedInput
         -- from_json accepts a JSON string or a byte array containing UTF-8 JSON.
@@ -21,13 +23,20 @@ contract JsonCodec {
         -- becomes nil, booleans and strings retain their values, integer tokens
         -- retain their exact values throughout the signed and unsigned 64-bit
         -- ranges, and other number tokens become doubles.
+        -- With bigints = true, every integer token retains its exact value,
+        -- including values outside the 64-bit ranges. With bigdecimals = true,
+        -- decimal and exponent tokens become exact decimals without an
+        -- intermediate double conversion. Both options default to false.
 
     @invariant DuplicateObjectKeys
-        -- When an object contains a key more than once, its last value wins.
+        -- By default, when an object contains a key more than once, its last
+        -- value wins. With reject_duplicate_keys = true, repeated decoded raw
+        -- names and collisions after key_fn fail. Checks are object-local.
     @invariant ParsedKeyTransformation
         -- from_json_with_options applies options.key_fn to every object key.
         -- Without key_fn, keys remain strings. If transformed keys collide, the
-        -- last value wins. Invalid options and key functions fail.
+        -- last value wins unless reject_duplicate_keys is true. Invalid options
+        -- and key functions fail. Boolean options require true or false.
 
 
     @invariant EncodingValues
@@ -47,6 +56,11 @@ contract JsonCodec {
         -- to_json_with_options produces pretty output exactly when options.pretty
         -- is true; otherwise it produces compact output equivalent to to_json.
 
+    @invariant ByteOutput
+        -- to_json_bytes returns a UTF-8 byte array containing the same JSON as
+        -- to_json, without a byte-order mark or trailing NUL. Its only option
+        -- is pretty, with the same semantics. No input byte array is modified.
+
     @invariant RejectedValues
         -- NaN, positive or negative infinity, and unsupported values fail rather
         -- than producing invalid or misleading JSON.
@@ -64,8 +78,15 @@ contract JsonCodec {
 
     @invariant PackagedExecution
         -- A standalone application built with jolt build can use from_json and
-        -- to_json without depending on its working directory or a native sidecar.
+        -- to_json and to_json_bytes without depending on its working directory
+        -- or a native sidecar.
     @invariant ErrorClassification
         -- Every public failure is ex-info whose data contains
         -- type = jjson/error.
+        -- Native read errors additionally expose an integer code. Syntax and
+        -- malformed-UTF-8 errors expose a zero-based byte_offset and one-based
+        -- line and column in the original source; columns count UTF-8 bytes.
+        -- CRLF is one newline. Non-source failures need not expose locations.
+        -- Duplicate errors expose reason = duplicate-key, the offending key,
+        -- and whether the collision happened after transformation.
 }

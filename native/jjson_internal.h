@@ -11,5 +11,8 @@
 yyjson_doc *jjson_internal_read_doc(char *data, size_t length,
                                     const char **message, size_t *position,
                                     int *code);
+yyjson_doc *jjson_internal_read_doc_flags(char *data, size_t length,
+                                         const char **message, size_t *position,
+                                         int *code, yyjson_read_flag flags);
 
 #endif /* JJSON_INTERNAL_H */

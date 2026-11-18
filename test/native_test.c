@@ -7,6 +7,7 @@
  */
 
 #include "jjson.h"
+#include "jjson_internal.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -291,6 +292,48 @@ int main(void) {
         for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
             valid = validate_literal(bad[i], strlen(bad[i]));
             CHECK(!valid, "malformed UTF-8 rejected");
+        }
+    }
+
+    /* Error positions point to the malformed sequence, not the document start. */
+    {
+        const char source[] = "{\"v\":\"\xc3(" "\"}";
+        char *buffer = jjson_input_alloc(sizeof(source) - 1);
+        CHECK(buffer != NULL, "invalid UTF-8 position allocation");
+        if (buffer) {
+            memcpy(buffer, source, sizeof(source) - 1);
+            valid = jjson_validate(buffer, sizeof(source) - 1,
+                                   &message, &position, &code);
+            CHECK(!valid && code == -2 && position == 6,
+                  "invalid UTF-8 reports the sequence offset");
+            jjson_free(buffer);
+        }
+    }
+
+    /* Raw numeric tokens retain digits even beyond double and uint64 ranges. */
+    {
+        const char *source = "[184467440737095516161234567890,1.2300,1e400]";
+        char *buffer = jjson_input_alloc(strlen(source));
+        CHECK(buffer != NULL, "raw number allocation");
+        if (buffer) {
+            yyjson_doc *doc;
+            memcpy(buffer, source, strlen(source));
+            doc = jjson_internal_read_doc_flags(buffer, strlen(source),
+                                                &message, &position, &code,
+                                                YYJSON_READ_NUMBER_AS_RAW);
+            CHECK(doc != NULL, "raw number decode accepts exact numeric range");
+            if (doc) {
+                yyjson_val *root = yyjson_doc_get_root(doc);
+                yyjson_val *integer = yyjson_arr_get(root, 0);
+                yyjson_val *decimal = yyjson_arr_get(root, 1);
+                CHECK(yyjson_is_raw(integer) && yyjson_get_len(integer) == 30,
+                      "oversized integer retains its token");
+                CHECK(yyjson_is_raw(decimal) && yyjson_get_len(decimal) == 6 &&
+                      memcmp(yyjson_get_raw(decimal), "1.2300", 6) == 0,
+                      "decimal token retains trailing zeroes");
+                yyjson_doc_free(doc);
+            }
+            jjson_free(buffer);
         }
     }
 

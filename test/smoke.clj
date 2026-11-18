@@ -170,4 +170,104 @@
   (doseq [worker workers]
     (check= true @worker "concurrent worker completed")))
 
+;; Byte output is a distinct UTF-8 contract, including escaping, empty values,
+;; non-ASCII characters and no byte-order mark or trailing NUL.
+(doseq [[value text] [[nil "null"] [true "true"] ["" "\"\""]
+                     ["é😀\u0000" "\"é😀\\u0000\""]
+                     [{"x" [1 false nil]} "{\"x\":[1,false,null]}"]]]
+  (let [output (json/to-json-bytes value)]
+    (check (bytes? output) "byte output is a Jolt byte array")
+    (check= (vec (.getBytes text "UTF-8")) (vec output) "exact UTF-8 output")
+    (check= value (json/from-json output) "byte output decodes to original value")))
+(let [value {"λ" ["😀" 42]}
+      output (json/to-json-bytes value {:pretty true})]
+  (check= value (json/from-json output) "pretty UTF-8 output")
+  (check (some #{10} (vec output)) "pretty byte output contains newlines"))
+(check= [49] (vec (json/to-json-bytes 1 nil)) "nil byte output options")
+(doseq [options [{:pretty nil} {:pretty 1} {:unknown true} []]]
+  (check-json-error #(json/to-json-bytes 1 options) "invalid byte output options"))
+(doseq [value [##NaN ##Inf ##-Inf (atom 1)]]
+  (check-json-error #(json/to-json-bytes value) "invalid byte output value"))
+
+;; Exact modes must retain the token's digits, not decimalize an already
+;; rounded double. Each mode leaves the other numeric category unchanged.
+(let [integer "1844674407370955161612345678901234567890"
+      negative (str "-" integer)
+      decimal "0.123456789012345678901234567890"]
+  (doseq [text [integer negative]]
+    (check= (bigint text) (json/from-json text {:bigints true}) "exact large integer")
+    (check= (bigint text)
+            (json/from-json (.getBytes text "UTF-8") {:bigints true})
+            "exact large integer from bytes"))
+  (check= (bigdec decimal) (json/from-json decimal {:bigdecimals true}) "exact decimal")
+  (check= "1.2300" (json/to-json (json/from-json "1.2300" {:bigdecimals true}))
+          "decimal scale survives decode and encode")
+  (check= (bigdec "1.234567890123456789e400")
+          (json/from-json "1.234567890123456789e400" {:bigdecimals true})
+          "exact exponent outside double range")
+  (check= (bigdec "1e-400")
+          (json/from-json "1e-400" {:bigdecimals true}) "exact tiny exponent")
+  (check= [42 (bigint integer) (bigdec decimal)]
+          (json/from-json (str "[42," integer "," decimal "]")
+                          {:bigints true :bigdecimals true})
+          "combined exact numeric modes")
+  (check= 1.25 (json/from-json "1.25" {:bigints true}) "bigints preserves double defaults")
+  (check= 18446744073709551615
+          (json/from-json "18446744073709551615" {:bigdecimals true})
+          "bigdecimals preserves exact uint64"))
+(doseq [options [{:bigints true} {:bigdecimals true} {:bigints true :bigdecimals true}]]
+  (doseq [text ["01" "1." "1e" "+1" "NaN" "Infinity"]]
+    (check-json-error #(json/from-json text options) "exact modes keep JSON number grammar strict")))
+(doseq [key [:bigints :bigdecimals :reject-duplicate-keys]
+        value [nil 1 "true"]]
+  (check-json-error #(json/from-json "0" {key value}) "decode flags require booleans"))
+
+;; Duplicate checks are object-local, compare decoded raw names, and also
+;; protect callers whose key transformation collapses distinct names.
+(doseq [text ["{\"a\":1,\"a\":2}" "{\"a\":1,\"\\u0061\":2}"
+              "[{\"nested\":{\"x\":null,\"x\":false}}]"
+              "{\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5,\"f\":6,\"g\":7,\"h\":8,\"a\":9}"]]
+  (let [data (error-data #(json/from-json text {:reject-duplicate-keys true}))]
+    (check= :duplicate-key (:reason data) "duplicate keys rejected")
+    (check= false (:transformed? data) "raw duplicate classification")))
+(check= [{"a" 1} {"a" 2}]
+        (json/from-json "[{\"a\":1},{\"a\":2}]" {:reject-duplicate-keys true})
+        "same key in independent objects is allowed")
+(check= {:same 2}
+        (json/from-json "{\"a\":1,\"A\":2}"
+                        {:key-fn (constantly :same) :reject-duplicate-keys false})
+        "explicit false keeps last-wins behavior")
+(let [data (error-data #(json/from-json "{\"a\":null,\"A\":2}"
+                                       {:key-fn str/lower-case :reject-duplicate-keys true}))]
+  (check= :duplicate-key (:reason data) "transformed collision rejected")
+  (check= true (:transformed? data) "transformed collision classification")
+  (check= "a" (:key data) "collision reports transformed key"))
+(let [calls (atom 0)]
+  (check-json-error
+   #(json/from-json "{\"a\":1,\"a\":2}"
+                    {:key-fn (fn [_] (swap! calls inc)) :reject-duplicate-keys true})
+   "raw duplicates rejected even with stateful noncolliding key-fn"))
+
+;; Source locations refer to the original input, not yyjson's mutated in-situ
+;; buffer. Columns are one-based UTF-8 bytes, offsets are zero-based.
+(doseq [[text offset line column]
+        [["{\"s\":\"a\\nb\",\"bad\":}" 18 1 19]
+         ["{\n \"é\": 1,\n \"bad\":\n}" 20 4 1]
+         ["{\r\n\"bad\":\r\n}" 11 3 1]
+         ["[" 1 1 2]]]
+  (doseq [input [text (.getBytes text "UTF-8")]]
+    (let [data (error-data #(json/from-json input))]
+      (check= :read (:operation data) "parse error operation")
+      (check (integer? (:code data)) "parse error has numeric code")
+      (check= offset (:byte-offset data) "parse error byte offset")
+      (check= line (:line data) "parse error line")
+      (check= column (:column data) "parse error byte column"))))
+(let [input (byte-array [123 34 118 34 58 34 -61 40 34 125])
+      before (vec input)
+      data (error-data #(json/from-json input))]
+  (check= -2 (:code data) "malformed UTF-8 error code")
+  (check= 6 (:byte-offset data) "malformed UTF-8 sequence offset")
+  (check= 7 (:column data) "malformed UTF-8 column")
+  (check= before (vec input) "invalid byte input remains unchanged"))
+
 (println "ok")

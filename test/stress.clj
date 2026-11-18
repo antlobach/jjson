@@ -1,5 +1,6 @@
 (require '[clojure.string :as str]
-         '[jjson.core :as json])
+         '[jjson.core :as json]
+         '[jolt.scheme :as scheme])
 
 (defn fail! [message data]
   (throw (ex-info message data)))
@@ -109,6 +110,41 @@
     (doseq [parser parsers]
       (wait! parser 180000 "large document parser completes before timeout" true))
     (wait! allocator 180000 "allocation worker progresses during native churn" :done)))
+
+;; Exercise the new paths while a separate thread explicitly requests GC.
+(let [expected {"integer" 184467440737095516161234567890N
+                "decimal" 0.123456789012345678901234567890M
+                "text" "λ😀\u0000"}
+      input (json/to-json-bytes expected)
+      before (vec input)
+      options {:bigints true :bigdecimals true :reject-duplicate-keys true}
+      workers (mapv
+               (fn [_]
+                 (future
+                   (dotimes [_ 100]
+                     (check= expected (json/from-json input options) "concurrent exact decode")
+                     (check= expected
+                             (json/from-json (json/to-json-bytes expected {:pretty true}) options)
+                             "concurrent direct byte encoding")
+                     (check= :duplicate-key
+                             (try
+                               (json/from-json "{\"x\":1,\"x\":2}" options)
+                               :accepted
+                               (catch Exception e (:reason (ex-data e))))
+                             "concurrent duplicate error cleanup")
+                     (check= :read
+                             (try
+                               (json/from-json "{\"bad\":}")
+                               :accepted
+                               (catch Exception e (:operation (ex-data e))))
+                             "concurrent syntax error cleanup"))
+                   true))
+               (range 16))
+      collector (future (dotimes [_ 100] (scheme/eval-string "(collect-rendezvous)")) true)]
+  (doseq [worker workers]
+    (wait! worker 60000 "new API worker completes with GC" true))
+  (wait! collector 60000 "collector progresses during new API calls" true)
+  (check= before (vec input) "shared exact input remains unchanged"))
 
 (println "ok")
 (flush)
