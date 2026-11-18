@@ -30,7 +30,7 @@ Add this dependency to your application's `deps.edn`:
 
 ```clojure
 {:deps {io.github.antlobach/jjson
-        {:git/sha "8fa439169c0f4c1e5a0de7d2570db8e844fa5a07"}}}
+        {:git/sha "b7ba11dc4421738edcb914aab06b7e7c2a5037f4"}}}
 ```
 
 Then require the namespace:
