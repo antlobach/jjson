@@ -19,6 +19,56 @@ static size_t live_blocks;
 static size_t live_bytes;
 static long fail_after = -1;
 
+/* Chez's live console mutexes are referenced from its custom Scheme heap,
+ * which LSan does not traverse. Mirror only pointers with demonstrated live
+ * owners in ordinary C roots. This is not an allocation suppression: leaked
+ * codec handles remain unrooted and are checked by the negative control. */
+static void *volatile console_mutex_roots[64];
+
+static void mirror_console_mutex_owners(void) {
+    const char *program =
+        "(let ([find (make-object-finder mutex? "
+        "             (list (console-input-port) (console-output-port) "
+        "                   (console-error-port)) 'static)]) "
+        "   (let loop ([addresses '()]) "
+        "     (let ([path (find)]) "
+        "       (if path "
+        "           (let* ([m (car path)] "
+        "                  [addr ((record-accessor (record-rtd m) 0) m)]) "
+        "             (loop (cons addr addresses))) "
+        "           addresses))))";
+    ptr text = Sstring(program);
+    ptr port, form, owners, cursor;
+    size_t count = 0;
+    Slock_object(text);
+    port = Scall1(Stop_level_value(Sstring_to_symbol("open-input-string")), text);
+    Slock_object(port);
+    Sunlock_object(text);
+    form = Scall1(Stop_level_value(Sstring_to_symbol("read")), port);
+    Slock_object(form);
+    owners = Scall1(Stop_level_value(Sstring_to_symbol("interpret")), form);
+    Slock_object(owners);
+    for (cursor = owners; Spairp(cursor); cursor = Scdr(cursor)) {
+        ptr address = Scar(cursor);
+        assert(count < sizeof(console_mutex_roots) / sizeof(console_mutex_roots[0]));
+        assert(Sfixnump(address));
+        /* Chez passes the aligned native address as a scheme-object whose
+         * bits look like a fixnum, not as a numerically converted integer. */
+        console_mutex_roots[count++] = (void *)address;
+    }
+    assert(count > 0);
+    Sunlock_object(owners);
+    Sunlock_object(form);
+    Sunlock_object(port);
+    printf("Live console mutex owners mirrored for LSan: %zu\n", count);
+}
+
+__attribute__((noinline)) static void leak_probe(ptr bytes) {
+    void *handle = jjson_decode_bytes(bytes, 0);
+    assert(handle && !jjson_decode_error(handle));
+    /* Intentional, isolated negative control: LSan must reject this process. */
+}
+
 static int fail_allocation(void) {
     if (fail_after < 0) return 0;
     if (fail_after == 0) return 1;
@@ -161,7 +211,7 @@ int main(int argc, char **argv) {
     ptr input, bytes, invalid, records, chars;
     uint64_t length = 2;
     char boot[4096];
-    assert(argc == 2);
+    assert(argc == 2 || (argc == 3 && strcmp(argv[2], "--leak-probe") == 0));
     Sscheme_init(NULL);
     snprintf(boot, sizeof(boot), "%s/petite.boot", argv[1]);
     Sregister_boot_file(boot);
@@ -195,6 +245,8 @@ int main(int argc, char **argv) {
         assert(live_blocks == 0 && live_bytes == 0);
     }
     fail_after = -1;
+    mirror_console_mutex_owners();
+    if (argc == 3) leak_probe(bytes);
     Sunlock_object(chars);
     Sunlock_object(records);
     Sunlock_object(invalid);

@@ -295,6 +295,10 @@ The harness uses:
 
 Each completed request must leave zero live codec allocations. The harness checks byte output, string output, malformed input, and output buffers with insufficient space.
 
+Chez stores console mutex references in its Scheme heap. The harness finds their live owners and copies their native addresses into C roots for LeakSanitizer. It does not ignore allocations.
+
+On Linux, a separate negative control leaks one codec handle. LeakSanitizer must reject that process. Leak detection stays enabled.
+
 ### Formal checks
 
 The proof runner requires Z3. Five bit-vector obligations check selected 64-bit calculations for buffer sizes and indexes. The models use the guards from the bridge.
