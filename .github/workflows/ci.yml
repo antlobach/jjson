@@ -17,6 +17,7 @@ concurrency:
 env:
   JOLT_VERSION: v0.8.27
   CHEZ_VERSION: v10.4.1
+  MACOSX_DEPLOYMENT_TARGET: '13.0'
 
 jobs:
   test:
