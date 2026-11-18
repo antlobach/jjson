@@ -1,7 +1,7 @@
 (ns jjson.jolt-bench
   (:require [jolt.time]
             [clojure.data.json :as data-json]
-            [jjson.core :as json]
+            [jjson.core :as jj]
             [jjson.harness :as harness]))
 
 (def libraries
@@ -26,7 +26,7 @@
 
 (defn prepare-encode [fixtures]
   (mapv (fn [fixture]
-          (assoc fixture :value (json/from-json (:text fixture))))
+          (assoc fixture :value (jj/from-json (:text fixture))))
         fixtures))
 
 (defn run-case! [library operation output data-directory command
@@ -36,9 +36,9 @@
                 (decode-fixtures fixtures)
                 (prepare-encode fixtures))
         run (case [library operation]
-              [:jjson :decode] #(json/from-json (:text %))
+              [:jjson :decode] #(jj/from-json (:text %))
               [:data-json :decode] #(data-json-read (:text %))
-              [:jjson :encode] #(json/to-json (:value %))
+              [:jjson :encode] #(jj/to-json (:value %))
               [:data-json :encode] #(data-json-write (:value %))
               (throw (ex-info "unknown Jolt benchmark case"
                               {:library library :operation operation})))
@@ -61,19 +61,14 @@
 
 (defn validate! [data-directory]
   (doseq [{:keys [name text]} (harness/load-fixtures! data-directory)]
-    (let [jjson-value (json/from-json text)
-          jjson-output (json/to-json jjson-value)]
-      (harness/ensure! (= jjson-value (json/from-json jjson-output))
+    (let [jjson-value (jj/from-json text)
+          jjson-output (jj/to-json jjson-value)]
+      (harness/ensure! (= jjson-value (jj/from-json jjson-output))
                        "jjson round-trip mismatch"
                        {:fixture name})
-      (if (= name "twitterescaped.json")
-        (let [rejected? (try
-                          (data-json-read text)
-                          false
-                          (catch Exception _ true))]
-          (harness/ensure! rejected?
-                           "data.json unexpectedly accepted twitterescaped.json"
-                           {:fixture name}))
+      ;; This historical corpus comparison excludes the fixture that the
+      ;; reference parser could not decode. Its rejection is not a contract.
+      (when-not (= name "twitterescaped.json")
         (let [data-json-value (data-json-read text)
               data-json-output (data-json-write data-json-value)]
           (harness/ensure! (= jjson-value data-json-value)

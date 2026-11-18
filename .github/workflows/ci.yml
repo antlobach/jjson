@@ -219,4 +219,4 @@ jobs:
           export PATH="$RUNNER_TEMP/no-compiler:$PATH"
           cd "$RUNNER_TEMP/app"
           printf '{:deps {io.github.antlobach/jjson {:git/sha "%s"}}}\n' "$GITHUB_SHA" > deps.edn
-          "$RUNNER_TEMP/$name/jolt" -e '(require (quote [jjson.core :as json])) (let [x {"text" "λ😀" "n" 18446744073709551616N "d" 1.2300M}] (assert (= x (json/from-json (json/to-json-bytes x) {:bigints true :bigdecimals true})))) (println "PASS: public dependency with no compiler or Chez headers")'
+          "$RUNNER_TEMP/$name/jolt" -e '(require (quote [jjson.core :as jj])) (let [x {"text" "λ😀" "n" 18446744073709551616N "d" 1.2300M}] (assert (= x (jj/from-json (jj/to-json-bytes x) {:bigints true :bigdecimals true})))) (println "PASS: public dependency with no compiler or Chez headers")'

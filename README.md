@@ -10,15 +10,15 @@ jjson converts JSON to Jolt values and Jolt values to JSON. It uses [yyjson](htt
 The decoder returns persistent Jolt maps and vectors. The encoder returns a string or UTF-8 bytes. Long native calls permit garbage collection on other threads.
 
 ```clojure
-(require '[jjson.core :as json])
+(require '[jjson.core :as jj])
 
-(json/from-json "{\"answer\":42}")
+(jj/from-json "{\"answer\":42}")
 ;; => {"answer" 42}
 
-(json/to-json {:answer 42})
+(jj/to-json {:answer 42})
 ;; => "{\"answer\":42}"
 
-(json/from-json (json/to-json-bytes {:message "Hello, λ😀"}))
+(jj/from-json (jj/to-json-bytes {:message "Hello, λ😀"}))
 ;; => {"message" "Hello, λ😀"}
 ```
 
@@ -36,7 +36,7 @@ Add this dependency to your application's `deps.edn`:
 Then require the namespace:
 
 ```clojure
-(require '[jjson.core :as json])
+(require '[jjson.core :as jj])
 ```
 
 Jolt obtains the source and runs the native setup task on first use. The task downloads a prebuilt library and checks its SHA-256 checksum. Later runs use the installed file.
@@ -56,8 +56,8 @@ This source pin uses the `v0.1.0-rc.1` preview binaries. Unsupported systems nee
 ### `from-json`
 
 ```clojure
-(json/from-json input)
-(json/from-json input options)
+(jj/from-json input)
+(jj/from-json input options)
 ```
 
 The input must be a JSON string or a UTF-8 byte array. The decoder does not change input byte arrays.
@@ -72,10 +72,10 @@ The input must be a JSON string or a UTF-8 byte array. The decoder does not chan
 | Number | Integer or double, unless an exact-number option changes the conversion |
 
 ```clojure
-(json/from-json (.getBytes "[true,null,42]" "UTF-8"))
+(jj/from-json (.getBytes "[true,null,42]" "UTF-8"))
 ;; => [true nil 42]
 
-(json/from-json "{\"user\":{\"id\":7}}" {:key-fn keyword})
+(jj/from-json "{\"user\":{\"id\":7}}" {:key-fn keyword})
 ;; => {:user {:id 7}}
 ```
 
@@ -91,14 +91,14 @@ Boolean options accept only `true` or `false`. Unknown options cause an error. A
 #### Exact numbers
 
 ```clojure
-(json/from-json "184467440737095516161234567890" {:bigints true})
+(jj/from-json "184467440737095516161234567890" {:bigints true})
 ;; => 184467440737095516161234567890N
 
-(json/from-json "1.2300000000000000000001" {:bigdecimals true})
+(jj/from-json "1.2300000000000000000001" {:bigdecimals true})
 ;; => 1.2300000000000000000001M
 
-(json/from-json "[18446744073709551616,1.2300]"
-                {:bigints true :bigdecimals true})
+(jj/from-json "[18446744073709551616,1.2300]"
+              {:bigints true :bigdecimals true})
 ;; => [18446744073709551616N 1.2300M]
 ```
 
@@ -117,21 +117,21 @@ Strict mode checks decoded names before the key conversion. It also checks the c
 For example, `"\u0061"` and `"a"` have the same decoded name. The same name in two separate objects does not cause a collision.
 
 ```clojure
-(json/from-json "{\"id\":1,\"id\":2}")
+(jj/from-json "{\"id\":1,\"id\":2}")
 ;; => {"id" 2}
 
-(json/from-json "{\"id\":1,\"id\":2}" {:reject-duplicate-keys true})
+(jj/from-json "{\"id\":1,\"id\":2}" {:reject-duplicate-keys true})
 ;; throws ex-info with :reason :duplicate-key
 ```
 
 ### `to-json` and `to-json-bytes`
 
 ```clojure
-(json/to-json value)
-(json/to-json value {:pretty true})
+(jj/to-json value)
+(jj/to-json value {:pretty true})
 
-(json/to-json-bytes value)
-(json/to-json-bytes value {:pretty true})
+(jj/to-json-bytes value)
+(jj/to-json-bytes value {:pretty true})
 ```
 
 `to-json` returns a string. `to-json-bytes` returns a Jolt byte array with UTF-8 JSON. The byte array has no byte-order mark or trailing NUL.
@@ -161,7 +161,7 @@ Public failures use `ex-info`. Their `ex-data` contains `:type :jjson/error`. Th
 
 ```clojure
 (try
-  (json/from-json "{\"x\":}")
+  (jj/from-json "{\"x\":}")
   (catch Exception e
     (ex-data e)))
 ;; => {:type :jjson/error, :operation :read, :code 6,
@@ -308,6 +308,7 @@ See [BENCHMARKS.md](BENCHMARKS.md) for recorded measurements and methods. That r
 ## For AI agents
 
 - Use `jjson.core` with `from-json`, `to-json`, and `to-json-bytes`.
+- Use `jj` as the namespace alias for `jjson.core`.
 - Do not invent Cheshire aliases, streaming methods, or native document handles.
 - Keep external keys as strings unless the schema bounds the key set.
 - Do not convert an unbounded set of external keys to keywords.

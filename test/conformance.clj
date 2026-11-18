@@ -1,5 +1,5 @@
 (require '[clojure.java.io :as io]
-         '[jjson.core :as json])
+         '[jjson.core :as jj])
 
 ;; A stuck parser must fail CI, not leave a permanently running job.
 (future
@@ -20,7 +20,7 @@
           category (subs name 0 1)
           input (java.nio.file.Files/readAllBytes (.toPath file))
           accepted? (try
-                      (json/from-json input options)
+                      (jj/from-json input options)
                       true
                       (catch Exception e
                         (if (= :jjson/error (:type (ex-data e)))
