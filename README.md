@@ -1,16 +1,18 @@
 # jjson
 
-[![CI](https://github.com/antlobach/jjson/actions/workflows/ci.yml/badge.svg)](https://github.com/antlobach/jjson/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/antlobach/jjson)](LICENSE)
-[![Last commit](https://img.shields.io/github/last-commit/antlobach/jjson)](https://github.com/antlobach/jjson/commits/main)
-[![GitHub stars](https://img.shields.io/github/stars/antlobach/jjson?style=flat)](https://github.com/antlobach/jjson/stargazers)
+[![Build](https://github.com/antlobach/jjson/actions/workflows/ci.yml/badge.svg)](https://github.com/antlobach/jjson/actions/workflows/ci.yml)
+[![Codecov](https://codecov.io/gh/antlobach/jjson/graph/badge.svg)](https://app.codecov.io/gh/antlobach/jjson)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/github/v/release/antlobach/jjson?include_prereleases&label=Version)](https://github.com/antlobach/jjson/releases)
+[![Jolt](https://img.shields.io/badge/Jolt-v0.8.27-blue.svg)](https://github.com/jolt-lang/jolt/releases/tag/v0.8.27)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/antlobach/jjson)
 
-jjson converts JSON to Jolt values and Jolt values to JSON. It uses [yyjson](https://github.com/ibireme/yyjson) through a native bridge. Its public namespace is `jjson.core`.
+jjson converts JSON to Jolt values and Jolt values to JSON. It uses [yyjson](https://github.com/ibireme/yyjson) through a native bridge. Its public namespace is `jjson`.
 
 The decoder returns persistent Jolt maps and vectors. The encoder returns a string or UTF-8 bytes. Long native calls permit garbage collection on other threads.
 
 ```clojure
-(require '[jjson.core :as jj])
+(require '[jjson :as jj])
 
 (jj/from-json "{\"answer\":42}")
 ;; => {"answer" 42}
@@ -30,13 +32,13 @@ Add this dependency to your application's `deps.edn`:
 
 ```clojure
 {:deps {io.github.antlobach/jjson
-        {:git/sha "b7ba11dc4421738edcb914aab06b7e7c2a5037f4"}}}
+        {:git/sha "beceb5653ca9f0b648d94b7ad70f765499df7856"}}}
 ```
 
 Then require the namespace:
 
 ```clojure
-(require '[jjson.core :as jj])
+(require '[jjson :as jj])
 ```
 
 Jolt obtains the source and runs the native setup task on first use. The task downloads a prebuilt library and checks its SHA-256 checksum. Later runs use the installed file.
@@ -299,6 +301,14 @@ Chez stores console mutex references in its Scheme heap. The harness finds their
 
 On Linux, a separate negative control leaks one codec handle. LeakSanitizer must reject that process. Leak detection stays enabled.
 
+### Coverage
+
+Linux CI exports LLVM coverage from the native safety harness and uploads it to Codecov with GitHub OIDC. No Codecov secret is required.
+
+The Codecov badge reports coverage for `native/jjson.c` and `native/jjson_chez.c`. It does not measure Clojure source or vendored yyjson.
+
+To export a local report, set `JJSON_COVERAGE_DIR` when you run `test/run-native-safety.sh`. Use Clang and matching `llvm-profdata` and `llvm-cov` tools. Set `CC`, `LLVM_PROFDATA`, and `LLVM_COV` if the tools are not on `PATH`.
+
 ### Formal checks
 
 The proof runner requires Z3. Five bit-vector obligations check selected 64-bit calculations for buffer sizes and indexes. The models use the guards from the bridge.
@@ -311,8 +321,8 @@ See [BENCHMARKS.md](BENCHMARKS.md) for recorded measurements and methods. That r
 
 ## For AI agents
 
-- Use `jjson.core` with `from-json`, `to-json`, and `to-json-bytes`.
-- Use `jj` as the namespace alias for `jjson.core`.
+- Use `jjson` with `from-json`, `to-json`, and `to-json-bytes`.
+- Use `jj` as the namespace alias for `jjson`.
 - Do not invent Cheshire aliases, streaming methods, or native document handles.
 - Keep external keys as strings unless the schema bounds the key set.
 - Do not convert an unbounded set of external keys to keywords.
