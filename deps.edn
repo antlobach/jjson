@@ -10,7 +10,8 @@
            :bench-jolt {:extra-paths ["bench"]
                         :extra-deps {org.clojure/data.json {:mvn/version "2.5.2"}}}
            :bench-jvm {:extra-paths ["bench"]
-                       :extra-deps {metosin/jsonista {:mvn/version "1.0.1"}}}}
+                       :extra-deps {metosin/jsonista {:mvn/version "1.0.1"}
+                                    org.clojure/data.json {:mvn/version "2.5.2"}}}}
  :tasks {install-native {:doc "Install the prebuilt native library"
                          :task (shell "bash" "native/install.sh")}
          native {:doc "Build the yyjson native bridge from source"

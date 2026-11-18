@@ -1,6 +1,6 @@
 -- allium: 3
 -- jjson.allium
--- Scope: The public jjson.core encoding and decoding boundary for Jolt programs.
+-- Scope: The public jjson encoding and decoding boundary for Jolt programs.
 -- Includes: JSON value mapping, numeric fidelity, duplicate keys, pretty output,
 --           UTF-8 input validation, optional parsed-key transformation, nesting
 --           limits, concurrency safety, packaged execution, and public errors.

@@ -1,4 +1,4 @@
-(ns jjson.core
+(ns jjson
   "Fast yyjson-backed JSON encoding and decoding for Jolt.
 
    Decoding parses with yyjson inside collect-safe native calls that write

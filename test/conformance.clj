@@ -1,5 +1,5 @@
 (require '[clojure.java.io :as io]
-         '[jjson.core :as jj])
+         '[jjson :as jj])
 
 ;; A stuck parser must fail CI, not leave a permanently running job.
 (future

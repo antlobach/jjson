@@ -1,5 +1,5 @@
 (require '[clojure.data.json :as reference]
-         '[jjson.core :as jj])
+         '[jjson :as jj])
 
 ;; Deterministic values cross the array-map and vector chunk boundaries.
 ;; The reference parser and writer do not use yyjson or this bridge.

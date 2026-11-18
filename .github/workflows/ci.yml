@@ -23,6 +23,9 @@ jobs:
   test:
     name: test (${{ matrix.platform }})
     timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -106,8 +109,36 @@ jobs:
       - name: JSONTestSuite public API conformance
         run: bash test/run-conformance.sh
 
+      - name: Install LLVM coverage tools
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y clang-14 llvm-14
+
       - name: Native sanitizers and zero-live-allocation checks
-        run: bash test/run-native-safety.sh
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            CC=clang-14 LLVM_PROFDATA=llvm-profdata-14 LLVM_COV=llvm-cov-14 \
+              JJSON_COVERAGE_DIR="$RUNNER_TEMP/jjson-coverage" bash test/run-native-safety.sh
+          else
+            bash test/run-native-safety.sh
+          fi
+
+      - name: Save native coverage report
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-coverage
+          path: ${{ runner.temp }}/jjson-coverage/native.lcov
+          if-no-files-found: error
+
+      - name: Upload native coverage to Codecov
+        if: matrix.platform == 'linux'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          files: ${{ runner.temp }}/jjson-coverage/native.lcov
+          flags: native
+          disable_search: true
+          fail_ci_if_error: true
 
       - name: Native static analysis
         run: clang --analyze -Werror -std=c11 -Xanalyzer -analyzer-output=text -I native -I "$CHEZ_INCLUDE" native/jjson.c native/jjson_chez.c
@@ -175,7 +206,7 @@ jobs:
           if [[ "$version" == *-* ]]; then flags+=(--prerelease); fi
           gh release create "$version" dist/* --verify-tag "${flags[@]}" \
             --title "jjson $version" \
-            --notes 'Verified native libraries for Jolt 0.8.27. Add the Git dependency and require jjson.core. Jolt downloads the platform library on first use. No compiler or Chez headers are required for normal use.'
+            --notes 'Verified native libraries for Jolt 0.8.27. Add the Git dependency and require jjson. Jolt downloads the platform library on first use. No compiler or Chez headers are required for normal use.'
 
   install:
     name: install (${{ matrix.platform }})
@@ -219,4 +250,4 @@ jobs:
           export PATH="$RUNNER_TEMP/no-compiler:$PATH"
           cd "$RUNNER_TEMP/app"
           printf '{:deps {io.github.antlobach/jjson {:git/sha "%s"}}}\n' "$GITHUB_SHA" > deps.edn
-          "$RUNNER_TEMP/$name/jolt" -e '(require (quote [jjson.core :as jj])) (let [x {"text" "λ😀" "n" 18446744073709551616N "d" 1.2300M}] (assert (= x (jj/from-json (jj/to-json-bytes x) {:bigints true :bigdecimals true})))) (println "PASS: public dependency with no compiler or Chez headers")'
+          "$RUNNER_TEMP/$name/jolt" -e '(require (quote [jjson :as jj])) (let [x {"text" "λ😀" "n" 18446744073709551616N "d" 1.2300M}] (assert (= x (jj/from-json (jj/to-json-bytes x) {:bigints true :bigdecimals true})))) (println "PASS: public dependency with no compiler or Chez headers")'

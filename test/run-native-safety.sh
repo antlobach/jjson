@@ -7,6 +7,11 @@ trap 'rm -rf "$work"' EXIT
 cc="${CC:-cc}"
 flags=(-std=c11 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all
        -Wall -Wextra -Werror -Wno-unused-parameter -I native -I "$chez")
+if [ -n "${JJSON_COVERAGE_DIR:-}" ]; then
+  mkdir -p "$JJSON_COVERAGE_DIR"
+  flags+=(-fprofile-instr-generate -fcoverage-mapping)
+  export LLVM_PROFILE_FILE="$work/%m-%p.profraw"
+fi
 export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}allocator_may_return_null=1"
 if [ "$(uname -s)" = Linux ]; then
   export ASAN_OPTIONS="$ASAN_OPTIONS:detect_leaks=1"
@@ -39,4 +44,13 @@ if [ "$(uname -s)" = Linux ]; then
     exit 1
   fi
   printf 'PASS: LeakSanitizer rejects an intentionally leaked codec handle\n'
+fi
+
+if [ -n "${JJSON_COVERAGE_DIR:-}" ]; then
+  "${LLVM_PROFDATA:-llvm-profdata}" merge -sparse "$work"/*.profraw -o "$work/coverage.profdata"
+  "${LLVM_COV:-llvm-cov}" export "$work/native-test" -object "$work/chez-test" \
+    -instr-profile "$work/coverage.profdata" -format=lcov \
+    native/jjson.c native/jjson_chez.c > "$JJSON_COVERAGE_DIR/native.lcov"
+  "${LLVM_COV:-llvm-cov}" report "$work/native-test" -object "$work/chez-test" \
+    -instr-profile "$work/coverage.profdata" native/jjson.c native/jjson_chez.c
 fi

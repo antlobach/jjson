@@ -1,5 +1,5 @@
 (require '[clojure.string :as str]
-         '[jjson.core :as jj])
+         '[jjson :as jj])
 
 (defn fail! [message data]
   (throw (ex-info message data)))

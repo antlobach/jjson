@@ -1,38 +1,48 @@
 (ns jjson.jvm-bench
   (:require [jsonista.core :as jsonista]
+            [clojure.data.json :as data-json]
             [jjson.harness :as harness])
   (:import [java.lang.management ManagementFactory]))
 
-(def libraries {:jsonista "1.0.1" :jackson "2.22.2"})
+(def libraries {:jsonista "1.0.1" :jackson "2.22.2" :clojure.data.json "2.5.2"})
 
 (defn runtime-metadata []
   {:name "OpenJDK"
    :version (System/getProperty "java.version")
+   :clojure-version (clojure-version)
    :vendor (System/getProperty "java.vendor")
    :vm (System/getProperty "java.vm.name")
    :vm-version (System/getProperty "java.vm.version")
    :vm-info (System/getProperty "java.vm.info")
    :input-arguments (vec (.getInputArguments (ManagementFactory/getRuntimeMXBean)))})
 
-(defn decode-fixtures [fixtures]
-  (filterv #(not= "twitterescaped.json" (:name %)) fixtures))
+(defn data-json-read [text]
+  (data-json/read-str text))
+
+(defn data-json-write [value]
+  (data-json/write-str value
+                       :escape-unicode false
+                       :escape-js-separators false
+                       :escape-slash false))
 
 (defn prepare-encode [fixtures]
   (mapv (fn [fixture]
           (assoc fixture :value (jsonista/read-value (:text fixture))))
         fixtures))
 
-(defn run-case! [operation output data-directory command
+(defn run-case! [library operation output data-directory command
                  progress case-index case-count]
   (let [fixtures (harness/load-fixtures! data-directory)
         items (if (= operation :decode)
-                (decode-fixtures fixtures)
+                fixtures
                 (prepare-encode fixtures))
-        run (case operation
-              :decode #(jsonista/read-value (:text %))
-              :encode #(jsonista/write-value-as-string (:value %))
-              (throw (ex-info "unknown Jsonista benchmark operation"
-                              {:operation operation})))
+        run (case [library operation]
+              [:jsonista :decode] #(jsonista/read-value (:text %))
+              [:data-json :decode] #(data-json-read (:text %))
+              [:jsonista :encode] #(jsonista/write-value-as-string (:value %))
+              [:data-json :encode] #(data-json-write (:value %))
+              (throw (ex-info "unknown JVM benchmark case"
+                              {:library library :operation operation})))
         checksum (if (= operation :decode)
                    harness/value-checksum
                    harness/string-checksum)]
@@ -41,7 +51,7 @@
       :runtime (runtime-metadata)
       :libraries libraries
       :command command
-      :library :jsonista
+      :library library
       :operation operation
       :items items
       :run run
@@ -51,20 +61,30 @@
       :case-count case-count})))
 
 (defn validate! [data-directory]
+  (harness/validate-collection-model! jsonista/read-value :jsonista)
+  (harness/validate-collection-model! data-json-read :data-json)
   (doseq [{:keys [name text]} (harness/load-fixtures! data-directory)]
     (let [value (jsonista/read-value text)
-          output (jsonista/write-value-as-string value)]
-      (harness/ensure! (= value (jsonista/read-value output))
-                       "Jsonista round-trip mismatch"
+          reference (data-json-read text)
+          jsonista-output (jsonista/write-value-as-string value)
+          data-json-output (data-json-write value)]
+      (harness/ensure! (= value reference)
+                       "JVM decoders disagree"
+                       {:fixture name})
+      (harness/ensure! (= value (data-json-read jsonista-output))
+                       "data.json rejected or changed Jsonista output"
+                       {:fixture name})
+      (harness/ensure! (= value (jsonista/read-value data-json-output))
+                       "Jsonista rejected or changed data.json output"
                        {:fixture name})))
   (println "jsonista-corpus-validation-ok"))
 
 (defn -main [& args]
   (case (first args)
     "--case"
-    (let [[_ operation output data-directory command
+    (let [[_ library operation output data-directory command
            progress case-index case-count] args]
-      (run-case! (keyword operation) output data-directory command
+      (run-case! (keyword library) (keyword operation) output data-directory command
                  progress (parse-long case-index) (parse-long case-count)))
 
     "--validate"

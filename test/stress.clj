@@ -1,5 +1,5 @@
 (require '[clojure.string :as str]
-         '[jjson.core :as jj]
+         '[jjson :as jj]
          '[jolt.scheme :as scheme])
 
 (defn fail! [message data]

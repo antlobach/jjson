@@ -1,5 +1,5 @@
 (ns jjson.build-smoke
-  (:require [jjson.core :as jj]))
+  (:require [jjson :as jj]))
 
 (defn -main [& _]
   (let [source "{\"user\":{\"name\":\"Ada\",\"active\":true},\"n\":[1,-2,3.5,null]}"
