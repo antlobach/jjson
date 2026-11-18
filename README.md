@@ -307,6 +307,8 @@ Linux CI exports LLVM coverage from the native safety harness and uploads it to 
 
 The Codecov badge reports coverage for `native/jjson.c` and `native/jjson_chez.c`. It does not measure Clojure source or vendored yyjson.
 
+The badge uses the default branch, `main`. It shows `unknown` until CI uploads its first report for `main`.
+
 To export a local report, set `JJSON_COVERAGE_DIR` when you run `test/run-native-safety.sh`. Use Clang and matching `llvm-profdata` and `llvm-cov` tools. Set `CC`, `LLVM_PROFDATA`, and `LLVM_COV` if the tools are not on `PATH`.
 
 ### Formal checks

@@ -1,94 +1,50 @@
 # Benchmarks
 
-These results use the JSON documents from `boostorg/json` tag
-`boost-1.83.0`, directory `bench/data`. Every fixture's byte count and SHA-256
-digest is checked before the benchmark starts.
+## Latest completed run
+
+Measured on 18 November 2026, from 23:20 to 23:25 UTC. This report contains only the completed eight-case run. It does not include measurements from the subsequent cancelled rerun.
+
+Throughput is in MiB/s. Both decode and encode use the same source-document byte count as the denominator. Encode throughput is not the number of output bytes per second.
+
+| Runtime | Library | Operation | Batch iterations | p25 | Median | p75 |
+|---|---|---|---:|---:|---:|---:|
+| Jolt | jjson | decode | 12 | 47.66 | 55.60 | 58.11 |
+| Jolt | clojure.data.json | decode | 1 | 1.21 | 1.26 | 1.32 |
+| JVM | Jsonista | decode | 7 | 76.61 | 94.51 | 100.61 |
+| JVM | clojure.data.json | decode | 3 | 18.75 | 27.23 | 29.21 |
+| Jolt | jjson | encode | 8 | 61.79 | 62.65 | 67.37 |
+| Jolt | clojure.data.json | encode | 1 | 3.25 | 3.58 | 3.72 |
+| JVM | Jsonista | encode | 21 | 157.59 | 160.74 | 164.27 |
+| JVM | clojure.data.json | encode | 8 | 51.10 | 53.18 | 54.71 |
+
+The p25–p75 ranges are wide in several cases. These medians are observations from one run on this host, not precise performance guarantees. Jsonista runs on the JVM, not Jolt. Cross-runtime differences include the runtime, compiler, collection implementation, allocation, and garbage collector; they do not isolate the JSON library.
 
 ## Method
 
-- One library and operation per fresh process.
-- Processes run strictly serially; Jolt and the JVM never benchmark
-  concurrently.
-- No CPU-idle gate.
-- Jolt runs from a release-built, closed-world executable rather than the
-  development runner.
-- Every decoder fully materializes its result.
-- Encode input values are materialized before the clock starts.
-- Correctness and round-trip checks run in separate processes before timing.
-- A process warms up for at least 3 seconds, calibrates a whole-corpus batch to
-  at least 1 second, then records five timed samples.
-- Reported values are the median of those five samples. Raw elapsed
-  nanoseconds, calibrated iteration counts, checksums, commands, runtime
-  details, and p25/p75 values are retained in `bench/results/`.
+- All cases use all 14 corpus documents: 15,390,956 source bytes. No fixture is excluded.
+- The corpus comes from `boostorg/json`, tag `boost-1.83.0`, directory `bench/data`. The runner checks each byte count and SHA-256 digest.
+- Each library and operation runs in a fresh process. Cases run serially, alternating Jolt and JVM cases. There is no CPU-idle or temperature gate, and the order is fixed.
+- Jolt uses a release-built standalone executable with `--closed-world`. The compiler retains the core because the codec constructs Scheme procedures at runtime; this is not a claim that the complete core was tree-shaken.
+- Decoders fully materialize persistent maps and vectors with string keys. There is no lazy or view-only decode path.
+- Encoders receive already materialized values. Each runtime gives both of its encoders the same prepared values.
+- String input and string output are measured. Output is compact. The data.json writers disable Unicode, JavaScript-separator, and slash escaping to match the other writers.
+- Validation runs outside timing. Both decoders must agree on every fixture, including `twitterescaped.json`. Each writer's output is parsed by the other decoder on the same runtime.
+- Each process warms up for at least 10 seconds, calibrates a whole-corpus batch to at least 2 seconds, then records seven samples. A slow whole-corpus iteration can exceed these minimum intervals.
+- p25 and p75 use linear interpolation between sorted samples. Allocation and garbage collection during the timed calls remain included.
+- Jolt ignores user dependency configuration. The JVM uses `-Srepro` and `-Dclojure.compiler.direct-linking=true`.
+- Exact-number modes, byte APIs, and pretty output are not measured.
 
-Decode uses the same 13-document, 14,828,548-byte corpus for all three
-libraries. `twitterescaped.json` is excluded because `clojure.data.json` 2.5.2
-on Jolt rejects its valid UTF-16 surrogate-pair escape. Encode uses all 14
-documents and 15,390,956 source bytes.
+## Host and versions
 
-Host:
+- Intel Core i5-7360U at 2.30 GHz; 2 physical cores and 4 logical CPUs.
+- macOS 13.7.8, x86-64.
+- Jolt compiler CLI: **v0.8.27**, invoked from `/tmp/jjson-toolchain/jolt-v0.8.27-x86_64-macos/jolt`.
+- Eclipse Adoptium OpenJDK 26.0.2+10; Clojure 1.12.4.
+- yyjson 0.13.0; Jsonista 1.0.1; Jackson 2.22.2; clojure.data.json 2.5.2.
 
-- Intel Core i5-7360U, 2 physical cores / 4 logical CPUs, 2.30 GHz
-- macOS 13.7.8, x86-64
-- Jolt 0.8.23, release-built executable
-- Eclipse Adoptium OpenJDK 26.0.2
-- Jsonista 1.0.1 / Jackson 2.22.2
-- clojure.data.json 2.5.2
+The completed run's standalone Jolt image reported `jolt.version` as `dev`. The compiler version above comes from the verified CLI used to build it, not from that embedded property. The run preceded the public namespace rename from `jjson.core` to `jjson`.
 
-## Results
-
-### Current codec
-
-Measured on the same host with the same method, one fresh process per case,
-for the current collect-safe decoder and record-based encoder. Throughput in
-MiB/s; encode throughput is normalized to source-document bytes.
-
-| Runtime | Library | Operation | Documents | Batch iterations | p25 | Median | p75 |
-|---|---|---|---:|---:|---:|---:|---:|
-| Jolt | jjson | decode | 13 | 10 | 127.408 | 134.632 | 134.893 |
-| Jolt | data.json | decode | 13 | 1 | 1.243 | 1.267 | 1.272 |
-| Jolt | jjson | encode | 14 | 7 | 96.918 | 97.429 | 97.445 |
-| Jolt | data.json | encode | 14 | 1 | 5.192 | 5.205 | 5.207 |
-| JVM | Jsonista | encode | 14 | 14 | 198.112 | 198.271 | 198.285 |
-
-Median ratios:
-
-- Decode: jjson is 106.28× data.json.
-- Encode: jjson is 18.72× data.json; Jsonista is 2.04× jjson.
-
-Jsonista executes on OpenJDK, not Jolt; that row is a cross-runtime
-comparison. Raw results:
-[`bench/results/jolt-current.edn`](bench/results/jolt-current.edn) and
-[`bench/results/jsonista-jvm-encode-current.edn`](bench/results/jsonista-jvm-encode-current.edn).
-
-### Earlier full run
-
-The table below is the complete `bench/run.sh` run from before the
-collect-safe codec; its jjson rows describe the previous implementation.
-
-Throughput in MiB/s. Encode throughput is normalized to source-document bytes,
-giving every library the same workload denominator.
-
-| Runtime | Library | Operation | Documents | Batch iterations | p25 | Median | p75 |
-|---|---|---|---:|---:|---:|---:|---:|
-| Jolt | jjson | decode | 13 | 8 | 108.234 | 108.403 | 111.216 |
-| Jolt | data.json | decode | 13 | 1 | 0.992 | 1.125 | 1.185 |
-| JVM | Jsonista | decode | 13 | 9 | 116.120 | 117.241 | 117.347 |
-| Jolt | jjson | encode | 14 | 2 | 15.728 | 16.018 | 16.343 |
-| Jolt | data.json | encode | 14 | 1 | 3.321 | 3.682 | 3.727 |
-| JVM | Jsonista | encode | 14 | 12 | 140.843 | 144.068 | 146.849 |
-
-On this host and corpus, the observed median ratios are:
-
-- Decode: jjson is 96.36× data.json; Jsonista is 1.08× jjson.
-- Encode: jjson is 4.35× data.json; Jsonista is 8.99× jjson.
-
-Jsonista executes on OpenJDK, not Jolt. Those rows are a cross-runtime
-comparison, not evidence about library performance under one runtime.
-
-The complete serial command took 221.29 seconds, including the release build,
-correctness validation, process startup, untimed warmup, calibration, and
-timed samples. Only the timed sample intervals contribute to throughput.
+The cancelled rerun replaced the local result files before it was stopped. The table preserves the completed run's recorded summary; its full sample files are not retained. Files from older committed runs are not evidence for this table.
 
 ## Run
 
@@ -96,21 +52,10 @@ timed samples. Only the timed sample intervals contribute to throughput.
 ./bench/run.sh
 ```
 
-The append-only progress stream is available immediately at
-`bench/results/progress.edn`:
+Set `JOLT` and `CLOJURE` to absolute executable paths if they are not at the default locations.
 
-```sh
-tail -f bench/results/progress.edn
-```
+The current runner captures the builder's version directly from `"$JOLT" --version` and records the standalone image's embedded version separately. It also explicitly sets `JOLT_TRACE=0` and `JOLT_AOT_ASYNC=0`; those environment overrides were not recorded in the completed run above.
 
-Each event identifies the build or validation phase, or the exact case,
-library, operation, sample, and completed-sample count. Progress writes occur
-outside timed intervals.
+A successful run writes `bench/results/jolt.edn` and `bench/results/jsonista-jvm.edn`. These contain samples, calibrated iteration counts, checksums, commands, and runtime metadata. `bench/results/progress.edn` records progress outside the timed intervals.
 
-Raw results:
-
-- [`bench/results/jolt.edn`](bench/results/jolt.edn)
-- [`bench/results/jsonista-jvm.edn`](bench/results/jsonista-jvm.edn)
-
-Corpus source:
-[Boost.JSON 1.83 benchmark documentation](https://www.boost.org/doc/libs/1_83_0/libs/json/doc/html/json/benchmarks.html).
+Corpus reference: [Boost.JSON 1.83 benchmark documentation](https://www.boost.org/doc/libs/1_83_0/libs/json/doc/html/json/benchmarks.html).
