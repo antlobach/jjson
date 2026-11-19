@@ -9,6 +9,13 @@ RESULTS="$ROOT/bench/results"
 BENCH_EXE="${BENCH_EXE:-/tmp/jjson-bench}"
 LOCK="$RESULTS/.benchmark-lock"
 PROGRESS="$RESULTS/progress.edn"
+CASE_COUNT=8
+# This documented equivalent of -Srepro also works with Jolt's lazy build loader.
+export JOLT_NO_USER_DEPS=1
+export JOLT_TRACE=0
+export JOLT_AOT_ASYNC=0
+JOLT_BENCH_VERSION="$("$JOLT" --version)"
+export JOLT_BENCH_VERSION="${JOLT_BENCH_VERSION#jolt }"
 
 mkdir -p "$RESULTS"
 if ! mkdir "$LOCK" 2>/dev/null; then
@@ -54,20 +61,21 @@ verify_fixture twitterescaped.json 562408 2a288b5af4691c55b6f40fa534225b3e08b8d8
 verify_fixture update-center.json 533178 e7b6a037bfdb5abdf122fa3445ddfacea78522a23df31c4799884c4ebf4c01fa
 
 rm -f "$RESULTS"/*.edn "$RESULTS"/.*-case.edn "$BENCH_EXE"
-printf '{:status :running, :phase :build, :completed 0, :total 30, :percentage 0}\n' > "$PROGRESS"
+printf '{:status :running, :phase :build, :completed 0, :percentage 0}\n' > "$PROGRESS"
 
-printf 'building release-mode Jolt benchmark executable\n'
+printf 'rebuilding native codec and release-mode Jolt benchmark executable\n'
 (
   cd "$ROOT"
+  "$JOLT" native
   "$JOLT" -A:bench-jolt build -m jjson.jolt-bench --closed-world -o "$BENCH_EXE"
 )
 
-printf '{:status :running, :phase :validate-jolt, :completed 0, :total 30, :percentage 0}\n' >> "$PROGRESS"
+printf '{:status :running, :phase :validate-jolt, :completed 0, :percentage 0}\n' >> "$PROGRESS"
 "$BENCH_EXE" --validate "$DATA"
-printf '{:status :running, :phase :validate-jsonista, :completed 0, :total 30, :percentage 0}\n' >> "$PROGRESS"
+printf '{:status :running, :phase :validate-jvm, :completed 0, :percentage 0}\n' >> "$PROGRESS"
 (
   cd "$ROOT"
-  "$CLOJURE" -M:bench-jvm -m jjson.jvm-bench --validate "$DATA"
+  "$CLOJURE" -Srepro -J-Dclojure.compiler.direct-linking=true -M:bench-jvm -m jjson.jvm-bench --validate "$DATA"
 )
 
 run_jolt_case() {
@@ -75,38 +83,41 @@ run_jolt_case() {
   local command="$BENCH_EXE --case $library $operation"
   printf 'running fresh Jolt process: %s %s\n' "$library" "$operation"
   "$BENCH_EXE" --case "$library" "$operation" "$output" "$DATA" "$command" \
-    "$PROGRESS" "$case_index" 6
+    "$PROGRESS" "$case_index" "$CASE_COUNT"
 }
 
 run_jvm_case() {
-  local operation="$1" output="$2" case_index="$3"
-  local command="$CLOJURE -M:bench-jvm -m jjson.jvm-bench --case $operation"
-  printf 'running fresh JVM process: jsonista %s\n' "$operation"
+  local library="$1" operation="$2" output="$3" case_index="$4"
+  local command="$CLOJURE -Srepro -J-Dclojure.compiler.direct-linking=true -M:bench-jvm -m jjson.jvm-bench --case $library $operation"
+  printf 'running fresh JVM process: %s %s\n' "$library" "$operation"
   (
     cd "$ROOT"
-    "$CLOJURE" -M:bench-jvm -m jjson.jvm-bench \
-      --case "$operation" "$output" "$DATA" "$command" \
-      "$PROGRESS" "$case_index" 6
+    "$CLOJURE" -Srepro -J-Dclojure.compiler.direct-linking=true -M:bench-jvm -m jjson.jvm-bench \
+      --case "$library" "$operation" "$output" "$DATA" "$command" \
+      "$PROGRESS" "$case_index" "$CASE_COUNT"
   )
 }
 
 run_jolt_case jjson decode "$RESULTS/.jjson-decode-case.edn" 1
-run_jolt_case data-json decode "$RESULTS/.data-json-decode-case.edn" 2
-run_jvm_case decode "$RESULTS/.jsonista-decode-case.edn" 3
-run_jolt_case jjson encode "$RESULTS/.jjson-encode-case.edn" 4
-run_jolt_case data-json encode "$RESULTS/.data-json-encode-case.edn" 5
-run_jvm_case encode "$RESULTS/.jsonista-encode-case.edn" 6
+run_jvm_case jsonista decode "$RESULTS/.jsonista-decode-case.edn" 2
+run_jolt_case data-json decode "$RESULTS/.data-json-decode-case.edn" 3
+run_jvm_case data-json decode "$RESULTS/.jvm-data-json-decode-case.edn" 4
+run_jolt_case jjson encode "$RESULTS/.jjson-encode-case.edn" 5
+run_jvm_case jsonista encode "$RESULTS/.jsonista-encode-case.edn" 6
+run_jolt_case data-json encode "$RESULTS/.data-json-encode-case.edn" 7
+run_jvm_case data-json encode "$RESULTS/.jvm-data-json-encode-case.edn" 8
 
 "$BENCH_EXE" --combine "$RESULTS/jolt.edn" \
   "$RESULTS/.jjson-decode-case.edn" "$RESULTS/.data-json-decode-case.edn" \
   "$RESULTS/.jjson-encode-case.edn" "$RESULTS/.data-json-encode-case.edn"
 (
   cd "$ROOT"
-  "$CLOJURE" -M:bench-jvm -m jjson.jvm-bench --combine \
+  "$CLOJURE" -Srepro -J-Dclojure.compiler.direct-linking=true -M:bench-jvm -m jjson.jvm-bench --combine \
     "$RESULTS/jsonista-jvm.edn" \
-    "$RESULTS/.jsonista-decode-case.edn" "$RESULTS/.jsonista-encode-case.edn"
+    "$RESULTS/.jsonista-decode-case.edn" "$RESULTS/.jsonista-encode-case.edn" \
+    "$RESULTS/.jvm-data-json-decode-case.edn" "$RESULTS/.jvm-data-json-encode-case.edn"
 )
 
 rm -f "$RESULTS"/.*-case.edn
-printf '{:status :complete, :phase :done, :completed 30, :total 30, :percentage 100}\n' >> "$PROGRESS"
+printf '{:status :complete, :phase :done, :percentage 100}\n' >> "$PROGRESS"
 printf 'wrote %s and %s\n' "$RESULTS/jolt.edn" "$RESULTS/jsonista-jvm.edn"

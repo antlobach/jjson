@@ -68,11 +68,12 @@ static void set_error(const char **message, size_t *position, int *code,
 
 /* Strict RFC 3629 acceptance. Rejects stray continuation bytes, truncation,
  * overlong forms, UTF-16 surrogate code points, and values above U+10FFFF. */
-static int utf8_valid(const char *bytes, size_t length) {
+static int utf8_valid(const char *bytes, size_t length, size_t *position) {
     size_t i = 0;
     while (i < length) {
         unsigned char lead;
         size_t remaining;
+        *position = i;
         /* Skip ASCII eight bytes at a time; any high bit falls through. */
         while (length - i >= 8) {
             uint64_t word;
@@ -81,6 +82,7 @@ static int utf8_valid(const char *bytes, size_t length) {
             i += 8;
         }
         if (i >= length) break;
+        *position = i;
         lead = (unsigned char)bytes[i];
         remaining = length - i;
         if (lead < 0x80) {
@@ -124,17 +126,19 @@ static int utf8_valid(const char *bytes, size_t length) {
 
 static int validate_value(const yyjson_val *value, size_t depth,
                           const char **message) {
+    size_t invalid_position;
     if (!value) {
         *message = "Unsupported JSON value";
         return 0;
     }
+    if (yyjson_is_raw(value)) return 1;
     if (yyjson_is_null(value) || yyjson_is_bool(value) ||
         yyjson_is_sint(value) || yyjson_is_uint(value) ||
         yyjson_is_real(value)) {
         return 1;
     }
     if (yyjson_is_str(value)) {
-        if (!utf8_valid(yyjson_get_str(value), yyjson_get_len(value))) {
+        if (!utf8_valid(yyjson_get_str(value), yyjson_get_len(value), &invalid_position)) {
             *message = "JSON contains invalid UTF-8";
             return 0;
         }
@@ -158,7 +162,7 @@ static int validate_value(const yyjson_val *value, size_t depth,
         yyjson_val *key;
         yyjson_obj_iter_init(value, &iterator);
         while ((key = yyjson_obj_iter_next(&iterator))) {
-            if (!utf8_valid(yyjson_get_str(key), yyjson_get_len(key))) {
+            if (!utf8_valid(yyjson_get_str(key), yyjson_get_len(key), &invalid_position)) {
                 *message = "JSON contains invalid UTF-8";
                 return 0;
             }
@@ -192,22 +196,23 @@ JJSON_EXPORT void jjson_free(void *pointer) {
     free(pointer);
 }
 
-yyjson_doc *jjson_internal_read_doc(char *data, size_t length,
-                                    const char **message, size_t *position,
-                                    int *code) {
+yyjson_doc *jjson_internal_read_doc_flags(char *data, size_t length,
+                                         const char **message, size_t *position,
+                                         int *code, yyjson_read_flag flags) {
     yyjson_read_err error;
     const char *validation_error = NULL;
     yyjson_doc *document;
+    size_t invalid_position = 0;
     if (!data) {
         set_error(message, position, code, "JSON input is null", 0, -1);
         return NULL;
     }
-    if (length && !utf8_valid(data, length)) {
+    if (length && !utf8_valid(data, length, &invalid_position)) {
         set_error(message, position, code,
-                  "JSON input contains invalid UTF-8", 0, -2);
+                  "JSON input contains invalid UTF-8", invalid_position, -2);
         return NULL;
     }
-    document = yyjson_read_opts(data, length, JJSON_READ_FLAGS, NULL, &error);
+    document = yyjson_read_opts(data, length, JJSON_READ_FLAGS | flags, NULL, &error);
     if (!document) {
         set_error(message, position, code, error.msg, error.pos,
                   (int)error.code);
@@ -215,10 +220,16 @@ yyjson_doc *jjson_internal_read_doc(char *data, size_t length,
     }
     if (!validate_value(yyjson_doc_get_root(document), 0, &validation_error)) {
         yyjson_doc_free(document);
-        set_error(message, position, code, validation_error, 0, -2);
+        set_error(message, position, code, validation_error, 0, -3);
         return NULL;
     }
     return document;
+}
+
+yyjson_doc *jjson_internal_read_doc(char *data, size_t length,
+                                    const char **message, size_t *position,
+                                    int *code) {
+    return jjson_internal_read_doc_flags(data, length, message, position, code, 0);
 }
 
 JJSON_EXPORT int jjson_validate(char *data, size_t length,
@@ -449,6 +460,10 @@ JJSON_EXPORT char *jjson_write_records(
     memset(&reader, 0, sizeof(reader));
     if (!records || record_count == 0) {
         if (message) *message = "JSON value records are empty";
+        return NULL;
+    }
+    if (record_count > SIZE_MAX / JJSON_RECORD_BYTES) {
+        if (message) *message = "JSON value record buffer is too large";
         return NULL;
     }
     if ((char_count && !chars) || char_shift > 24 ||

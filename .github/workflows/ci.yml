@@ -1,0 +1,253 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JOLT_VERSION: v0.8.27
+  CHEZ_VERSION: v10.4.1
+  MACOSX_DEPLOYMENT_TARGET: '13.0'
+
+jobs:
+  test:
+    name: test (${{ matrix.platform }})
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux
+            asset: x86_64-linux
+            machine: ta6le
+          - os: macos-15-intel
+            platform: macos
+            asset: x86_64-macos
+            machine: ta6osx
+          - os: macos-15
+            platform: macos-arm64
+            asset: aarch64-macos
+            machine: tarm64osx
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned Jolt
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="jolt-${JOLT_VERSION}-${{ matrix.asset }}"
+          base="https://github.com/jolt-lang/jolt/releases/download/${JOLT_VERSION}"
+          curl -fsSL -o "$RUNNER_TEMP/jolt.tar.gz" "$base/$name.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/jolt.sha256" "$base/$name.tar.gz.sha256"
+          read -r expected _ < "$RUNNER_TEMP/jolt.sha256"
+          actual="$(shasum -a 256 "$RUNNER_TEMP/jolt.tar.gz")"
+          test "${actual%% *}" = "$expected"
+          tar -xzf "$RUNNER_TEMP/jolt.tar.gz" -C "$RUNNER_TEMP"
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "$RUNNER_TEMP/$name/jolt" "$HOME/.local/bin/jolt"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Cache matching Chez runtime and headers
+        id: chez-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/chez
+          key: chez-${{ env.CHEZ_VERSION }}-${{ matrix.machine }}-no-curses-v1
+
+      - name: Build matching Chez runtime
+        if: steps.chez-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --recurse-submodules --shallow-submodules --branch "$CHEZ_VERSION" https://github.com/cisco/ChezScheme.git "$RUNNER_TEMP/ChezScheme"
+          cd "$RUNNER_TEMP/ChezScheme"
+          ./configure --threads --disable-x11 --disable-curses --installprefix="$HOME/chez"
+          make -j4
+          make install
+
+      - name: Configure Chez headers and safety harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          header="$HOME/chez/lib/csv${CHEZ_VERSION#v}/${{ matrix.machine }}/scheme.h"
+          test -f "$header"
+          echo "CHEZ_INCLUDE=${header%/scheme.h}" >> "$GITHUB_ENV"
+
+      - name: Build native library
+        run: ./native/build.sh
+
+      - name: Behavioral API tests
+        run: jolt test/smoke.clj
+
+      - name: Independent reference comparisons
+        run: jolt -M:test-reference test/differential.clj
+
+      - name: Concurrent allocation and GC stress
+        run: jolt test/stress.clj
+
+      - name: Cache pinned JSONTestSuite
+        uses: actions/cache@v4
+        with:
+          path: .cache/JSONTestSuite-*
+          key: json-test-suite-1ef36fa01286573e846ac449e8683f8833c5b26a-${{ matrix.platform }}
+
+      - name: JSONTestSuite public API conformance
+        run: bash test/run-conformance.sh
+
+      - name: Install LLVM coverage tools
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y clang-14 llvm-14
+
+      - name: Native sanitizers and zero-live-allocation checks
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            CC=clang-14 LLVM_PROFDATA=llvm-profdata-14 LLVM_COV=llvm-cov-14 \
+              JJSON_COVERAGE_DIR="$RUNNER_TEMP/jjson-coverage" bash test/run-native-safety.sh
+          else
+            bash test/run-native-safety.sh
+          fi
+
+      - name: Save native coverage report
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-coverage
+          path: ${{ runner.temp }}/jjson-coverage/native.lcov
+          if-no-files-found: error
+
+      - name: Upload native coverage to Codecov
+        if: matrix.platform == 'linux'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          files: ${{ runner.temp }}/jjson-coverage/native.lcov
+          flags: native
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: Native static analysis
+        run: clang --analyze -Werror -std=c11 -Xanalyzer -analyzer-output=text -I native -I "$CHEZ_INCLUDE" native/jjson.c native/jjson_chez.c
+
+      - name: Build standalone application
+        run: jolt -A:build-smoke build -m jjson.build-smoke --closed-world -o "$RUNNER_TEMP/jjson-build-smoke"
+
+      - name: Run standalone without source directory or native sidecar
+        working-directory: /
+        run: "$RUNNER_TEMP/jjson-build-smoke"
+
+      - name: Package verified native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r version < native/VERSION
+          archive="jjson-$version-${{ matrix.asset }}.tar.gz"
+          shared=libjjson.so
+          if [ "${{ matrix.platform }}" != linux ]; then shared=libjjson.dylib; fi
+          mkdir -p dist "$RUNNER_TEMP/package"
+          cp "native/$shared" native/libjjson.a native/yyjson.h LICENSE "$RUNNER_TEMP/package/"
+          tar -czf "dist/$archive" -C "$RUNNER_TEMP/package" "$shared" libjjson.a yyjson.h LICENSE
+          (cd dist && shasum -a 256 "$archive" > "$archive.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jjson-${{ matrix.asset }}
+          path: dist/*
+          if-no-files-found: error
+
+  proofs:
+    name: buffer arithmetic proofs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Z3
+        run: sudo apt-get update && sudo apt-get install -y z3
+      - name: Prove 64-bit buffer arithmetic obligations
+        run: bash test/run-proofs.sh
+
+  release:
+    name: publish prebuilt libraries
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, proofs]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jjson-*
+          path: dist
+          merge-multiple: true
+      - name: Publish verified release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r version < native/VERSION
+          test "$GITHUB_REF_NAME" = "$version"
+          flags=()
+          if [[ "$version" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$version" dist/* --verify-tag "${flags[@]}" \
+            --title "jjson $version" \
+            --notes 'Verified native libraries for Jolt 0.8.27. Add the Git dependency and require jjson. Jolt downloads the platform library on first use. No compiler or Chez headers are required for normal use.'
+
+  install:
+    name: install (${{ matrix.platform }})
+    needs: release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux
+            asset: x86_64-linux
+          - os: macos-15-intel
+            platform: macos
+            asset: x86_64-macos
+          - os: macos-15
+            platform: macos-arm64
+            asset: aarch64-macos
+    steps:
+      - name: Install Jolt and test the public dependency
+        env:
+          CHEZ_INCLUDE: /no-chez-headers
+          JOLT_GITLIBS: ${{ runner.temp }}/gitlibs
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="jolt-${JOLT_VERSION}-${{ matrix.asset }}"
+          base="https://github.com/jolt-lang/jolt/releases/download/${JOLT_VERSION}"
+          curl -fsSL -o "$RUNNER_TEMP/jolt.tar.gz" "$base/$name.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/jolt.sha256" "$base/$name.tar.gz.sha256"
+          read -r expected _ < "$RUNNER_TEMP/jolt.sha256"
+          actual="$(shasum -a 256 "$RUNNER_TEMP/jolt.tar.gz")"
+          test "${actual%% *}" = "$expected"
+          tar -xzf "$RUNNER_TEMP/jolt.tar.gz" -C "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/app" "$RUNNER_TEMP/no-compiler"
+          for compiler in cc gcc clang c++; do
+            printf '#!/bin/sh\necho "Unexpected compiler invocation" >&2\nexit 1\n' > "$RUNNER_TEMP/no-compiler/$compiler"
+            chmod +x "$RUNNER_TEMP/no-compiler/$compiler"
+          done
+          export PATH="$RUNNER_TEMP/no-compiler:$PATH"
+          cd "$RUNNER_TEMP/app"
+          printf '{:deps {io.github.antlobach/jjson {:git/sha "%s"}}}\n' "$GITHUB_SHA" > deps.edn
+          "$RUNNER_TEMP/$name/jolt" -e '(require (quote [jjson :as jj])) (let [x {"text" "λ😀" "n" 18446744073709551616N "d" 1.2300M}] (assert (= x (jj/from-json (jj/to-json-bytes x) {:bigints true :bigdecimals true})))) (println "PASS: public dependency with no compiler or Chez headers")'

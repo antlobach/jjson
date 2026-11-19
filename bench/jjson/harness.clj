@@ -18,13 +18,24 @@
    {:name "update-center.json" :bytes 533178 :sha256 "e7b6a037bfdb5abdf122fa3445ddfacea78522a23df31c4799884c4ebf4c01fa"}])
 
 (def corpus-bytes (reduce + (map :bytes corpus)))
-(def warmup-ns 3000000000)
-(def calibration-ns 1000000000)
-(def sample-count 5)
+(def warmup-ns 10000000000)
+(def calibration-ns 2000000000)
+(def sample-count 7)
 
 (defn ensure! [value message data]
   (when-not value
     (throw (ex-info message data))))
+
+(defn validate-collection-model! [decode library]
+  (let [value (decode "{\"items\":[{\"n\":1}],\"empty-array\":[],\"empty-object\":{}}")]
+    (ensure! (and (map? value)
+                  (every? string? (keys value))
+                  (vector? (get value "items"))
+                  (map? (first (get value "items")))
+                  (vector? (get value "empty-array"))
+                  (map? (get value "empty-object")))
+             "Decoder must materialize persistent maps and vectors with string keys"
+             {:library library})))
 
 (defn load-fixtures! [directory]
   (mapv (fn [{:keys [name bytes] :as fixture}]
@@ -103,8 +114,12 @@
      (* 1048576.0 (double elapsed-ns))))
 
 (defn percentile [sorted-values proportion]
-  (nth sorted-values
-       (long (* proportion (double (dec (count sorted-values)))))))
+  (let [position (* proportion (double (dec (count sorted-values))))
+        lower (long position)
+        upper (min (inc lower) (dec (count sorted-values)))
+        fraction (- position lower)]
+    (+ (nth sorted-values lower)
+       (* fraction (- (nth sorted-values upper) (nth sorted-values lower))))))
 
 (defn benchmark! [{:keys [output runtime libraries command library operation
                           items run checksum progress case-index case-count]}]
@@ -166,6 +181,7 @@
                       (range sample-count))
         sorted-throughputs (vec (sort (map :mib-per-second samples)))
         document {:schema 3
+                  :measured-at-ms (System/currentTimeMillis)
                   :runtime runtime
                   :libraries libraries
                   :environment {:os (System/getProperty "os.name")

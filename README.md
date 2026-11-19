@@ -1,94 +1,174 @@
 # jjson
 
-`jjson` is a yyjson-backed JSON codec for [Jolt](https://github.com/jolt-lang/jolt). Its public namespace is `jjson.core`.
+[![Build](https://github.com/antlobach/jjson/actions/workflows/ci.yml/badge.svg)](https://github.com/antlobach/jjson/actions/workflows/ci.yml)
+[![Codecov](https://codecov.io/gh/antlobach/jjson/graph/badge.svg)](https://app.codecov.io/gh/antlobach/jjson)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/github/v/release/antlobach/jjson?include_prereleases&label=Version)](https://github.com/antlobach/jjson/releases)
+[![Jolt](https://img.shields.io/badge/Jolt-v0.8.27-blue.svg)](https://github.com/jolt-lang/jolt/releases/tag/v0.8.27)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/antlobach/jjson)
 
-## Requirements
+JSON encoding and decoding for [Jolt](https://github.com/jolt-lang/jolt), backed by [yyjson](https://github.com/ibireme/yyjson). Native calls permit garbage collection on other threads. No Jolt runtime changes are required.
 
-- Jolt 0.8.23 or newer
-- A C11 compiler and the `scheme.h` matching the installed Jolt/Chez runtime
+## Installation
 
-The repository vendors yyjson 0.13.0. Build the native bridge before running from source:
+Use **Jolt v0.8.27**. Add this dependency to `deps.edn`:
 
-```sh
-./native/build.sh
+```clojure
+{:deps {io.github.antlobach/jjson
+        {:git/sha "e0312c24b260a15e04c7b62b9d8f513c84edf41d"}}}
 ```
 
-The script builds `native/libjjson.dylib` or `native/libjjson.so` for development and `native/libjjson.a` for standalone builds. `deps.edn` declares both forms through `:jolt/native`; callers do not configure library paths. On the persistent x86-64 macOS installation the build finds `scheme.h` automatically; other installations set `CHEZ_INCLUDE` to its directory.
+```clojure
+(require '[jjson :as jj])
+
+(jj/from-json "{\"answer\":42}")
+;; => {"answer" 42}
+
+(jj/to-json {:answer 42})
+;; => "{\"answer\":42}"
+
+(jj/from-json (jj/to-json-bytes {:message "λ😀"}))
+;; => {"message" "λ😀"}
+```
+
+Jolt downloads a prebuilt library on first use and checks its SHA-256 checksum. No C compiler or Chez headers are required.
+
+Prebuilt libraries support macOS 13+ on Intel and Apple Silicon, and Linux x86-64 on Ubuntu 22.04 or compatible systems. Setup requires Git, `curl`, `tar`, and a SHA-256 tool. Other systems require a source build.
 
 ## API
 
+| Function | Input | Output | Accepted options |
+|---|---|---|---|
+| `jj/from-json` | JSON string or UTF-8 byte array | Jolt value | `:key-fn`, `:bigints`, `:bigdecimals`, `:reject-duplicate-keys` |
+| `jj/to-json` | Jolt value | JSON string | `:pretty` |
+| `jj/to-json-bytes` | Jolt value | UTF-8 byte array, without a BOM or trailing NUL | `:pretty` |
+
+Each function accepts one required argument and an optional options map. Omitted options and `nil` are equivalent to `{}`. Unknown options and invalid option types cause `ex-info`.
+
+### Decode options
+
+| Option | Type | Default | Effect |
+|---|---|---|---|
+| `:key-fn` | Non-nil callable | `identity` | Converts each object key, including nested keys. |
+| `:bigints` | Boolean | `false` | Preserves integer tokens without rounding, including values outside 64-bit ranges. |
+| `:bigdecimals` | Boolean | `false` | Converts decimal and exponent tokens directly to BigDecimals. |
+| `:reject-duplicate-keys` | Boolean | `false` | Rejects duplicate decoded names and collisions after `:key-fn` within each object. |
+
 ```clojure
-(require '[jjson.core :as json])
-
-(json/from-json "{\"answer\":42}")
-;; => {"answer" 42}
-
-(json/from-json (.getBytes "[true,null]" "UTF-8"))
-;; => [true nil]
-
-(json/from-json "{\"user\":{\"id\":7}}" {:key-fn keyword})
+(jj/from-json "{\"user\":{\"id\":7}}" {:key-fn keyword})
 ;; => {:user {:id 7}}
 
-(json/to-json {:answer 42})
-;; => "{\"answer\":42}"
-
-(json/to-json {:answer 42} {:pretty true})
-;; => formatted JSON
+(jj/from-json "[18446744073709551616,1.2300]"
+              {:bigints true :bigdecimals true})
+;; => [18446744073709551616N 1.2300M]
 ```
 
-`from-json` accepts a JSON string or a UTF-8 byte array. An optional `:key-fn` transforms every object key, including nested keys. Duplicate keys and transformed-key collisions keep the last value. Omitting `:key-fn` leaves keys as strings.
+Objects become persistent maps. Arrays become vectors. JSON `null` becomes `nil`.
 
-Do not use `keyword` as `:key-fn` for untrusted or unbounded keys. Clojure keywords are interned and cannot be reclaimed. Keep untrusted keys as strings or use a bounded transformer.
+By default, integer tokens remain exact within the signed and unsigned 64-bit ranges. Larger integers and decimal or exponent tokens become doubles. Overflow causes an error. Underflow can round to zero.
 
-`to-json` encodes maps as objects and vectors, sequential values, and sets as arrays. String keys stay unchanged. Keywords become `name` or `namespace/name`; other map keys use `str`. Symbols and characters become strings. Bignums and BigDecimals retain their exact decimal digits, while ratios become doubles. NaN, infinities, and unsupported values fail.
+The exact-number options act independently. Use both to preserve all numeric precision. Decimal exponents must fit Jolt's BigDecimal representation.
 
-The option maps are strict:
+Duplicate keys keep their last value unless strict checking is enabled. Decoding does not change input bytes. Do not change a shared byte array during decoding.
 
-- `from-json`: only `:key-fn`; its value must be a function.
-- `to-json`: only `:pretty`; its value must be `true` or `false`.
-- `nil` is equivalent to an empty option map.
+### Encode options and values
 
-JSON inputs nested to depth 1000 are accepted. Deeper inputs fail. Integer tokens remain exact throughout the signed and unsigned 64-bit ranges. Other parsed number tokens become doubles. Input byte arrays are not modified.
+| Option | Type | Default | Effect |
+|---|---|---|---|
+| `:pretty` | Boolean | `false` | Writes indented JSON instead of compact JSON. Applies to both encoders. |
 
-Every public failure is `ex-info` with `{:type :jjson/error}` in `ex-data`.
+Boolean options accept only `true` or `false`. `to-json-bytes` does not create an intermediate JSON string.
 
-## Native execution
+Maps become objects. Vectors, sequences, and sets become arrays. Strings, symbols, and characters become strings. Integers and BigDecimals retain exact decimal digits. Ratios become doubles.
 
-Neither `from-json` nor `to-json` holds the Chez runtime while native code runs, so garbage collection on other threads proceeds during a decode or encode of any size. Decoding has three steps:
+Keyword keys become `name` or `namespace/name`. String keys do not change. Other keys use `str`. Map iteration determines object order. Set order is unspecified. Output is not canonical JSON.
 
-1. A collect-safe (`__collect_safe`) native call reads the locked input string or byte array, performs strict UTF-8 validation and yyjson parsing, and counts the values and characters the result needs.
-2. Scheme allocates one character string and one record bytevector of exactly that size; a second collect-safe call fills them, locked, with one 16-byte record per JSON value and the decoded characters of every string. Repeated object keys are emitted once.
-3. A Scheme loop walks the records and builds strings, numbers, persistent vectors, and maps; objects of up to eight entries are built directly as array maps. All managed allocation happens here, in ordinary Scheme code, where collection may run at any point.
+NaN, infinities, invalid Unicode, and unsupported values cause errors.
 
-Encoding is the mirror image:
+### Errors and limits
 
-1. One Scheme walk writes a 16-byte record per value into a growing bytevector and copies every string's characters into one growing string. Persistent maps and vectors, strings, numbers, nil, and booleans are handled directly; other values (sets, seqs, sorted maps, records, symbols, characters, decimals, ratios) are normalized by a Clojure fallback.
-2. A collect-safe call reads both buffers, locked, and has yyjson write the JSON, so number formatting and pretty layout are yyjson's.
-3. Scheme allocates the result string at its exact length; a second collect-safe call decodes the output into it, locked.
+Public failures use `ex-info` with `:type :jjson/error` in `ex-data`. Inspect `:operation`, `:code`, and `:reason` rather than message text.
 
-Native code touches only objects locked for the duration of its call and never allocates Scheme objects. All parser, writer, and key-interning state is request-local.
+Syntax and malformed UTF-8 errors include `:byte-offset`, `:line`, and `:column`. Offsets are zero-based. Lines and columns are one-based. Columns count UTF-8 bytes. CRLF counts as one newline.
 
-Standalone applications link `libjjson.a` into the executable:
+Positive codes are yyjson reader codes. Code `-2` means malformed UTF-8. Code `-3` means failure after parsing. Errors without a source position can omit location fields.
+
+Duplicate-key errors include `:reason :duplicate-key`, `:key`, and `:transformed?`. The last field identifies collisions after key conversion.
+
+The decoder supports nesting through depth **1,000** and holds the complete input and result in memory. Calls are synchronous. Streaming, NDJSON, selective queries, and public native handles are not supported.
+
+## Build from source
+
+Requirements:
+
+- Linux or macOS, Git, Bash, and Jolt **v0.8.27**.
+- A C11 compiler, such as Clang or GCC, and `ar`.
+- Chez **10.4.1** headers for the target architecture, including `scheme.h`.
+
+yyjson is included. No separate yyjson package is required.
 
 ```sh
-jolt -A:build-smoke build -m jjson.build-smoke --closed-world -o /tmp/jjson-build-smoke
-(cd / && /tmp/jjson-build-smoke)
+git clone https://github.com/antlobach/jjson.git
+cd jjson
+jolt native
 ```
 
-The resulting executable does not need a `libjjson` sidecar or a repository-relative working directory.
+`jolt native` compiles the source. It does not download a prebuilt package. It creates the shared library and `native/libjjson.a`.
 
-## Verification
+To use this checkout from another project, replace the Git dependency with:
+
+```clojure
+{:deps {io.github.antlobach/jjson
+        {:local/root "/absolute/path/to/jjson"}}}
+```
+
+The build detects standard Chez paths. Set these variables when detection fails:
+
+| Variable | Purpose |
+|---|---|
+| `CC` | Compiler executable |
+| `AR` | Archiver executable |
+| `JOLT_CHEZ_CSV` | Complete Chez runtime directory |
+| `CHEZ_INCLUDE` | Header directory override |
 
 ```sh
-./native/build.sh
+CC=/path/to/clang AR=/path/to/ar \
+CHEZ_INCLUDE=/path/to/chez/lib/csv10.4.1/ta6le \
+jolt native
+```
+
+`CHEZ_INCLUDE` takes precedence over `JOLT_CHEZ_CSV`. Use `ta6osx` on Intel macOS or `tarm64osx` on Apple Silicon.
+
+Use matching headers for the Chez version and target architecture. The [CI workflow](.github/workflows/ci.yml) shows the complete toolchain setup.
+
+### Checks
+
+```sh
 jolt test/smoke.clj
+jolt -M:test-reference test/differential.clj
 jolt test/stress.clj
+bash test/run-conformance.sh
+bash test/run-native-safety.sh
+bash test/run-proofs.sh
 ```
 
-The smoke suite covers value mapping, options, duplicate and transformed keys, Unicode and malformed UTF-8, numeric boundaries, exact decimal output, nesting limits, input immutability, and public error classification. The stress suite exercises concurrent parse/write operations, large documents, allocation churn, and termination without corruption or deadlock.
+The suite includes pinned [JSONTestSuite](https://github.com/nst/JSONTestSuite) fixtures, 1,000 reference comparisons, concurrent GC, allocation failures, and zero-live-allocation checks. CI runs ASan, UBSan, Clang analysis, and Linux LeakSanitizer with an intentional-leak negative control.
 
-## Benchmarks
+Native safety checks require a complete matching Chez installation. The proof runner requires Z3. Five proofs cover selected buffer calculations, not the complete codec or garbage collector.
 
-`bench/run.sh` compares `jjson` with `clojure.data.json` on Jolt and Jsonista on the JVM across the Boost.JSON 1.83 corpus in `bench/data/`. It release-builds the Jolt runner, validates semantics outside the clock, and runs one fresh benchmark process at a time. Five whole-corpus samples plus exact batch counts and elapsed nanoseconds are written to `bench/results/`; append-only live status is written to `bench/results/progress.edn`.
+Codecov covers `native/jjson.c` and `native/jjson_chez.c`, not Clojure or vendored yyjson. Set `JJSON_COVERAGE_DIR` to export local coverage. Clang and matching `LLVM_PROFDATA` and `LLVM_COV` tools are required.
 
-See [BENCHMARKS.md](BENCHMARKS.md) for the measured commands, environment, and results.
+See [benchmarks](BENCHMARKS.md), the [behavior contract](spec/jjson.allium), and [CI](.github/workflows/ci.yml) for details.
+
+## For AI agents
+
+- Require `[jjson :as jj]`. Use only `from-json`, `to-json`, and `to-json-bytes`.
+- Keep unbounded external keys as strings. Use both exact-number options when all numbers must retain precision.
+- Inspect `ex-data`. Do not infer errors from message text or invent streaming APIs.
+- Preserve collect-safe calls, buffer pins, and cleanup after exceptions. C must not allocate Scheme objects or call Scheme during deactivated calls.
+- Rebuild native code after bridge changes. Restart the process after replacing a loaded shared library.
+- Run the checks above. Do not treat tests or limited arithmetic proofs as complete verification.
+
+## License
+
+[MIT](LICENSE). Vendored yyjson retains its MIT notices.

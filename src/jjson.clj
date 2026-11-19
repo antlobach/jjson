@@ -1,4 +1,4 @@
-(ns jjson.core
+(ns jjson
   "Fast yyjson-backed JSON encoding and decoding for Jolt.
 
    Decoding parses with yyjson inside collect-safe native calls that write
@@ -21,10 +21,12 @@
 ;; Calls use their addresses through Chez foreign procedures below, which pass
 ;; locked Scheme objects to the collect-safe entry points.
 (ffi/defcfn native-decode-string-anchor "jjson_decode_string"
-  [:pointer] :pointer :blocking)
+  [:pointer :int] :pointer :blocking)
 (ffi/defcfn native-decode-bytes-anchor "jjson_decode_bytes"
-  [:pointer] :pointer :blocking)
+  [:pointer :int] :pointer :blocking)
 (ffi/defcfn native-decode-error-anchor "jjson_decode_error" [:pointer] :pointer)
+(ffi/defcfn native-decode-position-anchor "jjson_decode_error_position" [:pointer] :size_t)
+(ffi/defcfn native-decode-code-anchor "jjson_decode_error_code" [:pointer] :int)
 (ffi/defcfn native-decode-records-anchor "jjson_decode_records"
   [:pointer] :size_t)
 (ffi/defcfn native-decode-chars-anchor "jjson_decode_chars" [:pointer] :size_t)
@@ -37,6 +39,9 @@
   [:pointer :size_t :pointer :size_t :int] :pointer :blocking)
 (ffi/defcfn native-encode-error-anchor "jjson_encode_error" [:pointer] :pointer)
 (ffi/defcfn native-encode-chars-anchor "jjson_encode_chars" [:pointer] :size_t)
+(ffi/defcfn native-encode-bytes-anchor "jjson_encode_bytes" [:pointer] :size_t)
+(ffi/defcfn native-encode-fill-bytes-anchor "jjson_encode_fill_bytes"
+  [:pointer :pointer] :int :blocking)
 (ffi/defcfn native-encode-fill-anchor "jjson_encode_fill"
   [:pointer :pointer] :int :blocking)
 (ffi/defcfn native-encode-free-anchor "jjson_encode_free"
@@ -61,6 +66,45 @@
         (throw (ex-info (or (.getMessage e) "JSON operation failed")
                         {:type :jjson/error}
                         e))))))
+
+(defn- throw-parse-error! [input message position code]
+  (let [data {:type :jjson/error :operation :read :code code}
+        data (if (or (pos? code) (= code -2))
+               (let [bytes (if (string? input) (.getBytes input "UTF-8") input)
+                     end (min position (alength bytes))]
+                 (loop [i 0 line 1 column 1 previous -1]
+                   (if (= i end)
+                     (assoc data :byte-offset position :line line :column column)
+                     (let [b (bit-and 255 (aget bytes i))]
+                       (cond
+                         (= b 13) (recur (inc i) (inc line) 1 b)
+                         (= b 10) (recur (inc i) (if (= previous 13) line (inc line)) 1 b)
+                         :else (recur (inc i) line (inc column) b))))))
+               data)]
+    (throw (ex-info (str "JSON read failed: " message) data))))
+
+(defn- read-number [token bigints? bigdecimals?]
+  (if (re-find #"[.eE]" token)
+    (if bigdecimals?
+      (bigdec token)
+      (let [value (Double/parseDouble token)]
+        (when (or (= value ##Inf) (= value ##-Inf))
+          (throw (json-error "JSON number exceeds the finite double range")))
+        value))
+    (let [value (bigint token)]
+      (if (or bigints? (<= min-i64 value 18446744073709551615))
+        value
+        (let [value (double value)]
+          (when (or (= value ##Inf) (= value ##-Inf))
+            (throw (json-error "JSON number exceeds the finite double range")))
+          value)))))
+
+(defn- throw-duplicate! [key transformed?]
+  (throw (ex-info (if transformed?
+                    "JSON object keys collide after :key-fn"
+                    "JSON object contains a duplicate key")
+                  {:type :jjson/error :operation :read
+                   :reason :duplicate-key :key key :transformed? transformed?})))
 
 ;; ---------------------------------------------------------------------------
 ;; Reading
@@ -110,23 +154,27 @@
 ;; (#3%) index only buffers whose sizes C verified against the record walk.
 (def ^:private make-decoder
   (scheme/eval-string
-   "(lambda (a-string a-bytes a-error a-records a-chars a-keys a-fill a-free
-             make-pvec array-vec transient assoc! persistent! empty-map fail)
-      (let ([c-string (foreign-procedure __collect_safe a-string (scheme-object) uptr)]
-            [c-bytes (foreign-procedure __collect_safe a-bytes (scheme-object) uptr)]
+   "(lambda (a-string a-bytes a-error a-position a-code a-records a-chars a-keys a-fill a-free
+             make-pvec array-vec transient assoc! persistent! empty-map contains-key? assoc-key
+             fail fail-parse fail-duplicate)
+      (let ([c-string (foreign-procedure __collect_safe a-string (scheme-object int) uptr)]
+            [c-bytes (foreign-procedure __collect_safe a-bytes (scheme-object int) uptr)]
             [c-error (foreign-procedure a-error (uptr) utf-8)]
+            [c-position (foreign-procedure a-position (uptr) size_t)]
+            [c-code (foreign-procedure a-code (uptr) int)]
             [c-records (foreign-procedure a-records (uptr) size_t)]
             [c-chars (foreign-procedure a-chars (uptr) size_t)]
             [c-keys (foreign-procedure a-keys (uptr) size_t)]
             [c-fill (foreign-procedure __collect_safe a-fill
                       (uptr scheme-object scheme-object) int)]
             [c-free (foreign-procedure __collect_safe a-free (uptr) void)])
-        (define (locked-call f obj)
+        (define (locked-call f obj raw?)
           (lock-object obj)
-          (dynamic-wind void (lambda () (f obj)) (lambda () (unlock-object obj))))
-        (define (fill handle)
+          (dynamic-wind void (lambda () (f obj (if raw? 1 0)))
+                        (lambda () (unlock-object obj))))
+        (define (fill handle input)
           (let ([message (c-error handle)])
-            (when message (fail message)))
+            (when message (fail-parse input message (c-position handle) (c-code handle))))
           (let* ([nrecords (c-records handle)]
                  [chars (make-string (c-chars handle))]
                  [records (make-bytevector (fx* nrecords 16))]
@@ -139,7 +187,7 @@
                          (lambda () (unlock-object chars) (unlock-object records))))])
             (when (fx= ok 0) (fail (or (c-error handle) \"JSON decode failed\")))
             (values records chars (c-keys handle))))
-        (define (materialize records chars nkeys key-fn)
+        (define (materialize records chars nkeys key-fn number-fn reject-duplicates?)
           (let ([keys (make-vector nkeys #f)] [ri 0] [ci 0])
             (define (payload off) (#3%bytevector-u64-native-ref records (#3%fx+ off 8)))
             (define (key-id off) (#3%bytevector-u32-native-ref records (#3%fx+ off 4)))
@@ -168,6 +216,7 @@
                   [(4) (payload off)]
                   [(5) (#3%bytevector-ieee-double-native-ref records (#3%fx+ off 8))]
                   [(6) (take! (payload off))]
+                  [(12) (number-fn (take! (payload off)))]
                   [(7)
                    (let* ([n (payload off)] [v (make-vector n)])
                      (let loop ([i 0])
@@ -177,6 +226,19 @@
                      (make-pvec v))]
                   [else
                    (let ([n (payload off)])
+                     (if reject-duplicates?
+                         (let ([raw-keys (make-hashtable string-hash string=?)])
+                           (let loop ([i 0] [m empty-map])
+                             (if (#3%fx= i n)
+                                 m
+                                 (let* ([raw (read-key)]
+                                        [_ (when (hashtable-contains? raw-keys raw)
+                                             (fail-duplicate raw #f))]
+                                        [k (if key-fn (key-fn raw) raw)])
+                                   (hashtable-set! raw-keys raw #t)
+                                   (when (contains-key? m k) (fail-duplicate k #t))
+                                   (let ([v (read)])
+                                     (loop (#3%fx+ i 1) (assoc-key m k v)))))))
                      (if (#3%fx<= n 8)
                          ;; Up to 8 entries a map stays an array map, so build
                          ;; its slots directly: a repeated key keeps its first
@@ -208,37 +270,45 @@
                                (let* ([k (read-key)]
                                       [k (if key-fn (key-fn k) k)]
                                       [v (read)])
-                                 (loop (#3%fx+ i 1) (assoc! m k v)))))))])))
+                                 (loop (#3%fx+ i 1) (assoc! m k v))))))))])))
             (read)))
-        (lambda (input key-fn)
+        (lambda (input key-fn number-fn reject-duplicates?)
           (let ([handle (if (string? input)
-                            (locked-call c-string input)
-                            (locked-call c-bytes (array-vec input)))])
+                            (locked-call c-string input number-fn)
+                            (locked-call c-bytes (array-vec input) number-fn))])
             (when (eqv? handle 0) (fail \"Unable to allocate JSON decode state\"))
             (let-values ([(records chars nkeys)
                           (dynamic-wind void
-                                        (lambda () (fill handle))
+                                        (lambda () (fill handle input))
                                         (lambda () (c-free handle)))])
-              (materialize records chars nkeys key-fn))))))"))
+              (materialize records chars nkeys key-fn number-fn reject-duplicates?))))))"))
 
 (def ^:private decode
   (make-decoder (ffi/find-symbol "jjson_decode_string")
                 (ffi/find-symbol "jjson_decode_bytes")
                 (ffi/find-symbol "jjson_decode_error")
+                (ffi/find-symbol "jjson_decode_error_position")
+                (ffi/find-symbol "jjson_decode_error_code")
                 (ffi/find-symbol "jjson_decode_records")
                 (ffi/find-symbol "jjson_decode_chars")
                 (ffi/find-symbol "jjson_decode_keys")
                 (ffi/find-symbol "jjson_decode_fill")
                 (ffi/find-symbol "jjson_decode_free")
-                make-pvec jolt-array-vec transient assoc! persistent! {}
-                (fn [message]
-                  (throw (ex-info (str "JSON read failed: " message)
-                                  {:type :jjson/error :operation :read})))))
+                make-pvec jolt-array-vec transient assoc! persistent! {} contains? assoc
+                (fn [message] (throw (json-error message)))
+                throw-parse-error! throw-duplicate!))
 
-(defn- read-json [input key-fn]
+(defn- read-json [input options]
   (if (or (string? input) (bytes? input))
-    ;; false, not nil: jolt's nil is a true value in Scheme.
-    (decode input (if (identical? key-fn identity) false key-fn))
+    (let [key-fn (get options :key-fn identity)
+          bigints? (get options :bigints false)
+          bigdecimals? (get options :bigdecimals false)]
+      ;; false, not nil: Jolt's nil is a true value in Scheme.
+      (decode input (if (identical? key-fn identity) false key-fn)
+              (if (or bigints? bigdecimals?)
+                (fn [token] (read-number token bigints? bigdecimals?))
+                false)
+              (get options :reject-duplicate-keys false)))
     (throw (json-error "JSON input must be a string or byte array"))))
 ;; ---------------------------------------------------------------------------
 ;; Writing
@@ -287,17 +357,20 @@
 ;; it into a locked result string. All managed allocation happens in Scheme.
 (def ^:private make-encoder
   (scheme/eval-string
-   "(lambda (a-encode a-error a-chars a-fill a-free key->string fallback fail fail-native)
+   "(lambda (a-encode a-error a-chars a-bytes a-fill a-fill-bytes a-free
+             make-bytes array-vec key->string fallback fail fail-native)
       (let ([c-encode (foreign-procedure __collect_safe a-encode
                         (scheme-object size_t scheme-object size_t int) uptr)]
             [c-error (foreign-procedure a-error (uptr) utf-8)]
             [c-chars (foreign-procedure a-chars (uptr) size_t)]
+            [c-bytes (foreign-procedure a-bytes (uptr) size_t)]
+            [c-fill-bytes (foreign-procedure __collect_safe a-fill-bytes (uptr scheme-object) int)]
             [c-fill (foreign-procedure __collect_safe a-fill (uptr scheme-object) int)]
             [c-free (foreign-procedure __collect_safe a-free (uptr) void)])
         (define (pvec-ref p i)
           (let-values ([(chunk off) (pv-leaf-for p i)])
             (vector-ref chunk off)))
-        (define (encode value pretty)
+        (define (encode value pretty bytes?)
           (let ([records (make-bytevector 512)] [nrecords 0]
                 [chars (make-string 256)] [nchars 0])
             (define (record! tag)
@@ -396,7 +469,8 @@
                             (lock-object chars)
                             (dynamic-wind
                               void
-                              (lambda () (c-encode records nrecords chars nchars (if pretty 1 0)))
+                              (lambda () (c-encode records nrecords chars nchars
+                                                   (fx+ (if pretty 1 0) (if bytes? 2 0))))
                               (lambda () (unlock-object records) (unlock-object chars))))])
               (when (eqv? handle 0) (fail \"Unable to allocate JSON encode state\"))
               (dynamic-wind
@@ -404,12 +478,15 @@
                 (lambda ()
                   (let ([message (c-error handle)])
                     (when message (fail-native message)))
-                  (let ([output (make-string (c-chars handle))])
-                    (lock-object output)
+                  (let* ([output (if bytes? (make-bytes (c-bytes handle))
+                                           (make-string (c-chars handle)))]
+                         [buffer (if bytes? (array-vec output) output)])
+                    (lock-object buffer)
                     (let ([ok (dynamic-wind
                                 void
-                                (lambda () (c-fill handle output))
-                                (lambda () (unlock-object output)))])
+                                (lambda () (if bytes? (c-fill-bytes handle buffer)
+                                                     (c-fill handle buffer)))
+                                (lambda () (unlock-object buffer)))])
                       (when (fx= ok 0)
                         (fail-native (or (c-error handle) \"unknown native error\")))
                       output)))
@@ -420,8 +497,11 @@
   (make-encoder (ffi/find-symbol "jjson_encode")
                 (ffi/find-symbol "jjson_encode_error")
                 (ffi/find-symbol "jjson_encode_chars")
+                (ffi/find-symbol "jjson_encode_bytes")
                 (ffi/find-symbol "jjson_encode_fill")
+                (ffi/find-symbol "jjson_encode_fill_bytes")
                 (ffi/find-symbol "jjson_encode_free")
+                byte-array jolt-array-vec
                 key->string
                 encode-fallback
                 (fn [message] (throw (json-error message)))
@@ -437,15 +517,16 @@
   (cond
     (nil? options) nil
     (map? options)
-    (do (doseq [key (keys options)]
-          (when-not (= key :key-fn)
-            (throw (json-error "Unknown from-json option"))))
-        (if (contains? options :key-fn)
-          (let [key-fn (:key-fn options)]
-            (when-not (and key-fn (ifn? key-fn))
-              (throw (json-error "from-json :key-fn must be callable")))
-            key-fn)
-          nil))
+    (do
+      (doseq [[key value] options]
+        (case key
+          :key-fn (when-not (and value (ifn? value))
+                    (throw (json-error "from-json :key-fn must be callable")))
+          (:bigints :bigdecimals :reject-duplicate-keys)
+          (when-not (boolean? value)
+            (throw (json-error (str "from-json " key " must be a boolean"))))
+          (throw (json-error "Unknown from-json option"))))
+      options)
     :else (throw (json-error "from-json options must be a map"))))
 
 (defn- validate-write-options! [options]
@@ -464,20 +545,27 @@
     :else (throw (json-error "to-json options must be a map"))))
 
 (defn from-json
-  "Parses a JSON string or UTF-8 byte array into Jolt values. Object keys are
-   strings. Pass an options map containing only :key-fn to transform every
-   object key (including nested ones); transformed-key collisions keep the
-   last source value. Every failure is ex-info with {:type :jjson/error}."
+  "Parses JSON text or UTF-8 bytes. Options: :key-fn, :bigints, :bigdecimals,
+   :reject-duplicate-keys. Boolean options default to false. Parse errors carry
+   :code and, when available, :byte-offset plus one-based :line/:column
+   (UTF-8 byte columns). Every failure has :type :jjson/error."
   ([input]
-   (wrap-error #(read-json input identity)))
+   (wrap-error #(read-json input nil)))
   ([input options]
-   (wrap-error #(read-json input
-                           (or (validate-read-options! options) identity)))))
+   (wrap-error #(read-json input (validate-read-options! options)))))
 
 (defn to-json
   "Encodes VALUE as compact JSON. Pass {:pretty true} for indented output;
    that is the only option and it must be a boolean."
   ([value]
-   (wrap-error #(write-json value false)))
+   (wrap-error #(write-json value false false)))
   ([value options]
-   (wrap-error #(write-json value (validate-write-options! options)))))
+   (wrap-error #(write-json value (validate-write-options! options) false))))
+
+(defn to-json-bytes
+  "Encodes VALUE directly as UTF-8 bytes, without an intermediate JSON string.
+   Accepts the same {:pretty boolean} option as to-json."
+  ([value]
+   (wrap-error #(write-json value false true)))
+  ([value options]
+   (wrap-error #(write-json value (validate-write-options! options) true))))

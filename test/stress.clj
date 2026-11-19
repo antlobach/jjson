@@ -1,5 +1,6 @@
 (require '[clojure.string :as str]
-         '[jjson.core :as json])
+         '[jjson :as jj]
+         '[jolt.scheme :as scheme])
 
 (defn fail! [message data]
   (throw (ex-info message data)))
@@ -43,7 +44,7 @@
 (def shared-input (.getBytes shared-doc "UTF-8"))
 (def shared-before (vec shared-input))
 
-(check= shared-expected (json/from-json shared-input)
+(check= shared-expected (jj/from-json shared-input)
         "shared input parses before stress")
 (check= 18446744073709551615 (get shared-expected "big")
         "shared input reference value")
@@ -54,11 +55,11 @@
               (future
                 (dotimes [iteration 100]
                   (check= shared-expected
-                          (json/from-json shared-input)
+                          (jj/from-json shared-input)
                           (str "worker " worker-index " parse of shared input"))
                   (check= (round-trip-value worker-index iteration)
-                          (json/from-json
-                           (json/to-json (round-trip-value worker-index iteration)))
+                          (jj/from-json
+                           (jj/to-json (round-trip-value worker-index iteration)))
                           (str "worker " worker-index " round trip"))
                   ;; Keep short-lived allocations hot while native calls run.
                   (byte-array (vec (range 16))))
@@ -80,17 +81,17 @@
                                          ",\"region\":\"eu\",\"scale\":" i ".25}"))
                                   (range events)))
                "]}")
-      doc-expected (json/from-json doc)
+      doc-expected (jj/from-json doc)
       doc-bytes (.getBytes doc "UTF-8")]
   (check= events (count (get doc-expected "events")) "large document event count")
   (check= 49999 (get-in doc-expected ["events" 49999 "id"]) "large document final id")
   (check= "eu" (get-in doc-expected ["events" 49999 "region"]) "large document final region")
-  (check= events (count (get (json/from-json doc-bytes) "events"))
+  (check= events (count (get (jj/from-json doc-bytes) "events"))
           "large document byte parse")
   (let [parsers
         (mapv (fn [parser-index]
                 (future
-                  (let [parsed (json/from-json doc-bytes)]
+                  (let [parsed (jj/from-json doc-bytes)]
                     (check= events
                             (count (get parsed "events"))
                             (str "parser " parser-index " event count"))
@@ -109,6 +110,41 @@
     (doseq [parser parsers]
       (wait! parser 180000 "large document parser completes before timeout" true))
     (wait! allocator 180000 "allocation worker progresses during native churn" :done)))
+
+;; Exercise the new paths while a separate thread explicitly requests GC.
+(let [expected {"integer" 184467440737095516161234567890N
+                "decimal" 0.123456789012345678901234567890M
+                "text" "λ😀\u0000"}
+      input (jj/to-json-bytes expected)
+      before (vec input)
+      options {:bigints true :bigdecimals true :reject-duplicate-keys true}
+      workers (mapv
+               (fn [_]
+                 (future
+                   (dotimes [_ 100]
+                     (check= expected (jj/from-json input options) "concurrent exact decode")
+                     (check= expected
+                             (jj/from-json (jj/to-json-bytes expected {:pretty true}) options)
+                             "concurrent direct byte encoding")
+                     (check= :duplicate-key
+                             (try
+                               (jj/from-json "{\"x\":1,\"x\":2}" options)
+                               :accepted
+                               (catch Exception e (:reason (ex-data e))))
+                             "concurrent duplicate error cleanup")
+                     (check= :read
+                             (try
+                               (jj/from-json "{\"bad\":}")
+                               :accepted
+                               (catch Exception e (:operation (ex-data e))))
+                             "concurrent syntax error cleanup"))
+                   true))
+               (range 16))
+      collector (future (dotimes [_ 100] (scheme/eval-string "(collect-rendezvous)")) true)]
+  (doseq [worker workers]
+    (wait! worker 60000 "new API worker completes with GC" true))
+  (wait! collector 60000 "collector progresses during new API calls" true)
+  (check= before (vec input) "shared exact input remains unchanged"))
 
 (println "ok")
 (flush)

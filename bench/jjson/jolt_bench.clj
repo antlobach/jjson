@@ -1,16 +1,15 @@
 (ns jjson.jolt-bench
-  (:require [jolt.time]
-            [clojure.data.json :as data-json]
-            [jjson.core :as json]
+  (:require [clojure.data.json :as data-json]
+            [jjson :as jj]
             [jjson.harness :as harness]))
 
 (def libraries
   {:jjson "working-tree"
-   :clojure.data.json "2.5.2"
-   :jolt.time "0.0.8"})
+   :yyjson "0.13.0"
+   :clojure.data.json "2.5.2"})
 
 (defn data-json-read [text]
-  (data-json/read-str text :key-fn identity))
+  (data-json/read-str text))
 
 (defn data-json-write [value]
   (data-json/write-str value
@@ -19,26 +18,27 @@
                        :escape-slash false))
 
 (defn runtime-metadata []
-  {:name "Jolt" :version "0.8.23" :mode :release-built})
-
-(defn decode-fixtures [fixtures]
-  (filterv #(not= "twitterescaped.json" (:name %)) fixtures))
+  {:name "Jolt"
+   :version (System/getenv "JOLT_BENCH_VERSION")
+   :embedded-version (System/getProperty "jolt.version")
+   :trace-mode (System/getenv "JOLT_TRACE")
+   :mode :release-built})
 
 (defn prepare-encode [fixtures]
   (mapv (fn [fixture]
-          (assoc fixture :value (json/from-json (:text fixture))))
+          (assoc fixture :value (jj/from-json (:text fixture))))
         fixtures))
 
 (defn run-case! [library operation output data-directory command
                  progress case-index case-count]
   (let [fixtures (harness/load-fixtures! data-directory)
         items (if (= operation :decode)
-                (decode-fixtures fixtures)
+                fixtures
                 (prepare-encode fixtures))
         run (case [library operation]
-              [:jjson :decode] #(json/from-json (:text %))
+              [:jjson :decode] #(jj/from-json (:text %))
               [:data-json :decode] #(data-json-read (:text %))
-              [:jjson :encode] #(json/to-json (:value %))
+              [:jjson :encode] #(jj/to-json (:value %))
               [:data-json :encode] #(data-json-write (:value %))
               (throw (ex-info "unknown Jolt benchmark case"
                               {:library library :operation operation})))
@@ -60,28 +60,22 @@
       :case-count case-count})))
 
 (defn validate! [data-directory]
+  (harness/validate-collection-model! jj/from-json :jjson)
+  (harness/validate-collection-model! data-json-read :data-json)
   (doseq [{:keys [name text]} (harness/load-fixtures! data-directory)]
-    (let [jjson-value (json/from-json text)
-          jjson-output (json/to-json jjson-value)]
-      (harness/ensure! (= jjson-value (json/from-json jjson-output))
-                       "jjson round-trip mismatch"
+    (let [jjson-value (jj/from-json text)
+          data-json-value (data-json-read text)
+          jjson-output (jj/to-json jjson-value)
+          data-json-output (data-json-write jjson-value)]
+      (harness/ensure! (= jjson-value data-json-value)
+                       "Jolt decoders disagree"
                        {:fixture name})
-      (if (= name "twitterescaped.json")
-        (let [rejected? (try
-                          (data-json-read text)
-                          false
-                          (catch Exception _ true))]
-          (harness/ensure! rejected?
-                           "data.json unexpectedly accepted twitterescaped.json"
-                           {:fixture name}))
-        (let [data-json-value (data-json-read text)
-              data-json-output (data-json-write data-json-value)]
-          (harness/ensure! (= jjson-value data-json-value)
-                           "Jolt decoders disagree"
-                           {:fixture name})
-          (harness/ensure! (= data-json-value (data-json-read data-json-output))
-                           "data.json round-trip mismatch"
-                           {:fixture name})))))
+      (harness/ensure! (= jjson-value (data-json-read jjson-output))
+                       "data.json rejected or changed jjson output"
+                       {:fixture name})
+      (harness/ensure! (= jjson-value (jj/from-json data-json-output))
+                       "jjson rejected or changed data.json output"
+                       {:fixture name})))
   (println "jolt-corpus-validation-ok"))
 
 (defn -main [& args]

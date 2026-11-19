@@ -1,15 +1,18 @@
 {:paths ["src"]
+ :jolt/min-version "0.8.27"
  :jolt/native [{:name "jjson"
                 :darwin ["native/libjjson.dylib"]
                 :linux ["native/libjjson.so"]
+                :build "install-native"
                 :static {:archive "native/libjjson.a"}}]
  :aliases {:build-smoke {:extra-paths ["test"]}
+           :test-reference {:extra-deps {org.clojure/data.json {:mvn/version "2.5.2"}}}
            :bench-jolt {:extra-paths ["bench"]
-                        :extra-deps {org.clojure/data.json {:mvn/version "2.5.2"}
-                                     io.github.jolt-lang/time {:git/url "https://github.com/jolt-lang/time"
-                                                               :git/tag "v0.0.8"
-                                                               :git/sha "33c5e9831c046cfcbe68bc0c9c33e92568eaebb1"}}}
+                        :extra-deps {org.clojure/data.json {:mvn/version "2.5.2"}}}
            :bench-jvm {:extra-paths ["bench"]
-                       :extra-deps {metosin/jsonista {:mvn/version "1.0.1"}}}}
- :tasks {native {:doc "Build the yyjson native bridge"
+                       :extra-deps {metosin/jsonista {:mvn/version "1.0.1"}
+                                    org.clojure/data.json {:mvn/version "2.5.2"}}}}
+ :tasks {install-native {:doc "Install the prebuilt native library"
+                         :task (shell "bash" "native/install.sh")}
+         native {:doc "Build the yyjson native bridge from source"
                  :task (shell "bash" "native/build.sh")}}}
