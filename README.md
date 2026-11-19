@@ -97,14 +97,29 @@ Duplicate-key errors include `:reason :duplicate-key`, `:key`, and `:transformed
 
 The decoder supports nesting through depth **1,000** and holds the complete input and result in memory. Calls are synchronous. Streaming, NDJSON, selective queries, and public native handles are not supported.
 
-## Development
+## Build from source
 
-A source build requires a C11 compiler, `ar`, and matching Chez **10.4.1** headers. yyjson is vendored.
+Requirements:
+
+- Linux or macOS, Git, Bash, and Jolt **v0.8.27**.
+- A C11 compiler, such as Clang or GCC, and `ar`.
+- Chez **10.4.1** headers for the target architecture, including `scheme.h`.
+
+yyjson is included. No separate yyjson package is required.
 
 ```sh
 git clone https://github.com/antlobach/jjson.git
 cd jjson
 jolt native
+```
+
+`jolt native` compiles the source. It does not download a prebuilt package. It creates the shared library and `native/libjjson.a`.
+
+To use this checkout from another project, replace the Git dependency with:
+
+```clojure
+{:deps {io.github.antlobach/jjson
+        {:local/root "/absolute/path/to/jjson"}}}
 ```
 
 The build detects standard Chez paths. Set these variables when detection fails:
@@ -115,6 +130,14 @@ The build detects standard Chez paths. Set these variables when detection fails:
 | `AR` | Archiver executable |
 | `JOLT_CHEZ_CSV` | Complete Chez runtime directory |
 | `CHEZ_INCLUDE` | Header directory override |
+
+```sh
+CC=/path/to/clang AR=/path/to/ar \
+CHEZ_INCLUDE=/path/to/chez/lib/csv10.4.1/ta6le \
+jolt native
+```
+
+`CHEZ_INCLUDE` takes precedence over `JOLT_CHEZ_CSV`. Use `ta6osx` on Intel macOS or `tarm64osx` on Apple Silicon.
 
 Use matching headers for the Chez version and target architecture. The [CI workflow](.github/workflows/ci.yml) shows the complete toolchain setup.
 

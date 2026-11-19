@@ -21,7 +21,7 @@ Throughput in MiB/s, normalized to source-document bytes for both operations.
 
 Intel Core i5-7360U, 2 cores / 4 threads, 2.30 GHz. macOS 13.7.8, x86-64.
 
-Jolt compiler 0.8.27. OpenJDK 26.0.2+10 and Clojure 1.12.4. yyjson 0.13.0, Jsonista 1.0.1, Jackson 2.22.2, and data.json 2.5.2.
+Jolt compiler 0.8.27. OpenJDK 26.0.2+10 and Clojure 1.12.4. yyjson 0.13.0, Jsonista 1.0.1, and data.json 2.5.2.
 
 ## Limits
 
