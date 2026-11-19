@@ -5,9 +5,9 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/github/v/release/antlobach/jjson?include_prereleases&label=Version)](https://github.com/antlobach/jjson/releases)
 [![Jolt](https://img.shields.io/badge/Jolt-v0.8.27-blue.svg)](https://github.com/jolt-lang/jolt/releases/tag/v0.8.27)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/antlobach/jjson)
+[![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-blue)](https://deepwiki.com/antlobach/jjson)
 
-JSON encoding and decoding for [Jolt](https://github.com/jolt-lang/jolt), backed by [yyjson](https://github.com/ibireme/yyjson). Native calls permit garbage collection on other threads. No Jolt runtime changes are required.
+JSON encoding and decoding for [Jolt](https://github.com/jolt-lang/jolt), backed by [yyjson](https://github.com/ibireme/yyjson).
 
 ## Installation
 
@@ -31,7 +31,7 @@ Use **Jolt v0.8.27**. Add this dependency to `deps.edn`:
 ;; => {"message" "λ😀"}
 ```
 
-Jolt downloads a prebuilt library on first use and checks its SHA-256 checksum. No C compiler or Chez headers are required.
+Jolt downloads a prebuilt library on first use and checks its SHA-256 checksum.
 
 Prebuilt libraries support macOS 13+ on Intel and Apple Silicon, and Linux x86-64 on Ubuntu 22.04 or compatible systems. Setup requires Git, `curl`, `tar`, and a SHA-256 tool. Other systems require a source build.
 
