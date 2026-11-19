@@ -25,7 +25,7 @@ Jolt compiler 0.8.27. OpenJDK 26.0.2+10 and Clojure 1.12.4. yyjson 0.13.0, Jsoni
 
 ## Limits
 
-Several cases have wide p25–p75 ranges. These are single-host measurements, not performance guarantees. Cross-runtime results do not isolate library performance. Case order is fixed, without CPU-idle or temperature controls. Raw samples and Jolt tracing/AOT settings are unavailable for this table.
+Several cases have wide p25–p75 ranges. Cross-runtime rows compare complete stacks. Case order is fixed, without CPU-idle or temperature controls. Raw samples and Jolt tracing/AOT settings are unavailable.
 
 ## Run
 
