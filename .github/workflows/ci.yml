@@ -206,7 +206,7 @@ jobs:
           if [[ "$version" == *-* ]]; then flags+=(--prerelease); fi
           gh release create "$version" dist/* --verify-tag "${flags[@]}" \
             --title "jjson $version" \
-            --notes 'Verified native libraries for Jolt 0.8.27. Add the Git dependency and require jjson. Jolt downloads the platform library on first use. No compiler or Chez headers are required for normal use.'
+            --notes 'JSON codec for Jolt 0.8.27. Native packages for Linux x86-64 and macOS Intel/Apple Silicon. [Installation and API](https://github.com/antlobach/jjson#installation).'
 
   install:
     name: install (${{ matrix.platform }})
